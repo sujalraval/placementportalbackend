@@ -1,0 +1,15 @@
+node_modules/
+dist/
+
+# Keep environment variables out of version control. .env.example is tracked.
+.env
+.env.*
+!.env.example
+
+# Prisma generates the client into src/ from schema.prisma; it is build
+# output, not source. `npm run prisma:generate` recreates it.
+/src/generated/
+
+*.log
+npm-debug.log*
+.DS_Store

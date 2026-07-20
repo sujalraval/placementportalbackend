@@ -1,0 +1,1864 @@
+// Gujarat University Placement Portal — database schema
+//
+// Derived from docs/system-flow.md in the frontend repo. Three deliberate
+// departures from what the prototype does, each called out in that doc:
+//
+//   1. The public `Jobs` list, the recruiter's `RecJobs`, and Admin's
+//      `Openings` collapse into one `job_posting` owned by a company, with a
+//      `status` and a `visibility_scope`.
+//   2. A posting's scored applicant list and the recruiter's flat evaluation
+//      board collapse into one `application` (one row per student x posting);
+//      round marks hang off it as `application_round`.
+//   3. Notifications are written from an `outbox_event` rather than a dozen
+//      unrelated actions reaching into the inbox table directly.
+//
+// Internships stay a separate posting/tracker pair rather than folding into
+// job_posting: they carry a different lifecycle (approval -> mentor ->
+// report -> evaluation) and the doc's ER model keeps them apart.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  STUDENT
+  RECRUITER
+  COORDINATOR
+  FACULTY
+  ADMIN
+}
+
+/// Federated sign-in providers. Local email/password is the absence of an
+/// AuthIdentity, not a value here.
+enum AuthProvider {
+  LINKEDIN
+  MICROSOFT
+}
+
+enum UserStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+}
+
+enum PlacementStatus {
+  UNPLACED
+  PLACED
+  OPTED_OUT
+  HIGHER_STUDIES
+}
+
+/// Applies to documents, profile changes and company records alike.
+enum VerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum VisibilityScope {
+  UNIVERSITY_WIDE
+  DEPARTMENT_ONLY
+}
+
+enum CompanyType {
+  DIRECT_EMPLOYER
+  RECRUITMENT_AGENCY
+  INDIVIDUAL_AGENT
+}
+
+enum OnboardingStage {
+  REGISTERED
+  DOCUMENTS_SUBMITTED
+  VERIFIED
+  MOU_SIGNED
+  ACTIVATED
+}
+
+enum PostingKind {
+  PLACEMENT
+  OJT
+}
+
+enum PostingStatus {
+  DRAFT
+  PENDING_APPROVAL
+  PUBLISHED
+  CLOSED
+}
+
+/// Which console created a posting. Replaces the old recruiter-list /
+/// admin-openings split without needing two tables.
+enum PostingSource {
+  RECRUITER
+  ADMIN
+}
+
+enum RoundType {
+  APTITUDE
+  TECHNICAL
+  HR
+  GROUP_DISCUSSION
+  MANAGERIAL
+  OTHER
+}
+
+enum RoundResult {
+  PENDING
+  PASS
+  HOLD
+  FAIL
+}
+
+/// The student-facing 4-stage bar collapses these; Admin's selection funnel
+/// reads them individually.
+enum ApplicationStatus {
+  APPLIED
+  SHORTLISTED
+  INTERVIEW
+  OFFER
+  JOINED
+  REJECTED
+  WITHDRAWN
+}
+
+enum InterviewMode {
+  ON_CAMPUS
+  ONLINE
+  TELEPHONIC
+  OFF_CAMPUS
+}
+
+enum InterviewOutcome {
+  SCHEDULED
+  PASSED
+  FAILED
+  NO_SHOW
+  CANCELLED
+}
+
+enum OfferStatus {
+  RELEASED
+  ACCEPTED
+  DECLINED
+  REVOKED
+}
+
+enum InternshipAffiliation {
+  WITH_COLLEGE
+  INDEPENDENT
+}
+
+enum InternshipStage {
+  APPLIED
+  SELECTED
+  APPROVAL_REQUESTED
+  APPROVED
+  ONGOING
+  REPORT_SUBMITTED
+  EVALUATED
+  COMPLETED
+  REJECTED
+}
+
+enum DriveStatus {
+  SCHEDULED
+  ONGOING
+  COMPLETED
+  CANCELLED
+}
+
+enum DocumentType {
+  RESUME
+  MARKSHEET
+  CERTIFICATE
+  ID_PROOF
+  OFFER_LETTER
+  COMPANY_REGISTRATION
+  OTHER
+}
+
+enum VerificationItemType {
+  DOCUMENT
+  PROFILE_FIELD
+  STATUS_CHANGE
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  ESCALATED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  SMS
+  WHATSAPP
+}
+
+enum ContentStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum EmploymentOutcomeStatus {
+  ACTIVE
+  PROMOTED
+  LEFT
+  HIGHER_STUDIES
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
+enum EnrollmentStatus {
+  ENROLLED
+  IN_PROGRESS
+  COMPLETED
+  DROPPED
+}
+
+enum OutboxStatus {
+  PENDING
+  PROCESSED
+  FAILED
+}
+
+// ---------------------------------------------------------------------------
+// Identity & academic structure
+// ---------------------------------------------------------------------------
+
+/// One account per human. `role` decides which console they land in; the
+/// nullable department/company FKs are the data-visibility fence:
+///   COORDINATOR / FACULTY -> departmentId scopes what they see
+///   RECRUITER             -> companyId scopes what they see
+///   ADMIN                 -> both null, sees everything
+model User {
+  id    String @id @default(uuid()) @db.Uuid
+  email String @unique @db.Citext
+  /// Null for accounts that only ever sign in through LinkedIn/Outlook.
+  /// `authIdentities` being empty is what makes an account password-only.
+  passwordHash String? @map("password_hash")
+  fullName     String  @map("full_name")
+  phone        String?
+  avatarUrl    String?    @map("avatar_url")
+  role         UserRole
+  status       UserStatus @default(PENDING)
+  designation  String?
+  lastLoginAt  DateTime?  @map("last_login_at") @db.Timestamptz(6)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  departmentId String? @map("department_id") @db.Uuid
+  companyId    String? @map("company_id") @db.Uuid
+
+  department Department? @relation("DepartmentMembers", fields: [departmentId], references: [id], onDelete: SetNull)
+  company    Company?    @relation("CompanyRecruiters", fields: [companyId], references: [id], onDelete: SetNull)
+
+  authIdentities             AuthIdentity[]
+  refreshSessions            RefreshSession[]
+  student                    Student?
+  coordinatorOf              Department?               @relation("DepartmentCoordinator")
+  menteeRecords              MenteeRecord[]
+  companiesOnboarded         Company[]                 @relation("CompanyOnboardedBy")
+  promotionsRequested        CompanyPromotionRequest[] @relation("PromotionRequestedBy")
+  promotionsDecided          CompanyPromotionRequest[] @relation("PromotionDecidedBy")
+  jobPostingsCreated         JobPosting[]              @relation("JobPostingCreatedBy")
+  jobPostingsApproved        JobPosting[]              @relation("JobPostingApprovedBy")
+  internshipPostingsCreated  InternshipPosting[]       @relation("InternshipPostingCreatedBy")
+  applicationRoundsEvaluated ApplicationRound[]
+  internshipApprovalsDecided InternshipApproval[]
+  drivesCreated              Drive[]
+  notifications              Notification[]
+  notificationPrefs          NotificationPreference[]
+  verificationsReviewed      VerificationItem[]        @relation("VerificationReviewedBy")
+  documentsReviewed          Document[]                @relation("DocumentReviewedBy")
+  ticketsRaised              Ticket[]                  @relation("TicketRaisedBy")
+  ticketsAssigned            Ticket[]                  @relation("TicketAssignedTo")
+  ticketComments             TicketComment[]
+  surveysCreated             Survey[]
+  surveyResponses            SurveyResponse[]
+  closedLoopActions          ClosedLoopAction[]
+  employmentOutcomesUpdated  EmploymentOutcome[]
+  newsAuthored               NewsItem[]
+  eventsCreated              EventItem[]
+  broadcastsSent             Broadcast[]
+  mockInterviewsTaken        MockInterview[]           @relation("MockInterviewer")
+  messageThreads             MessageThread[]           @relation("ThreadCreatedBy")
+  messagesSent               Message[]
+  settingsUpdated            AppSetting[]
+  auditLogs                  AuditLog[]
+
+  @@index([role, status])
+  @@index([departmentId])
+  @@index([companyId])
+  @@map("user")
+}
+
+/// A federated login linked to an account.
+///
+/// Keyed on `providerAccountId` — the provider's stable subject id — never on
+/// email. Email is stored for display only. Matching on email would mean that
+/// anyone who gets a university address onto a LinkedIn or personal Microsoft
+/// profile inherits that user's account, and since Outlook sign-in accepts any
+/// Microsoft account here, a provider-reported address proves nothing about
+/// enrolment. Linking a second provider requires an authenticated session.
+model AuthIdentity {
+  id                String       @id @default(uuid()) @db.Uuid
+  userId            String       @map("user_id") @db.Uuid
+  provider          AuthProvider
+  providerAccountId String       @map("provider_account_id")
+
+  /// As reported by the provider at link time; may drift from `user.email`
+  /// and is never used to resolve who is signing in.
+  email         String?
+  emailVerified Boolean @default(false) @map("email_verified")
+  displayName   String? @map("display_name")
+  avatarUrl     String? @map("avatar_url")
+
+  linkedAt    DateTime  @default(now()) @map("linked_at") @db.Timestamptz(6)
+  lastLoginAt DateTime? @map("last_login_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// One account per provider subject, and one identity per provider per user.
+  @@unique([provider, providerAccountId])
+  @@unique([userId, provider])
+  @@index([userId])
+  @@map("auth_identity")
+}
+
+/// One row per issued refresh token, so a session can actually be revoked —
+/// a stateless refresh JWT stays valid until it expires no matter what.
+/// Stores a SHA-256 of the token, never the token itself: a leaked database
+/// dump must not be a pile of working sessions.
+model RefreshSession {
+  id        String @id @default(uuid()) @db.Uuid
+  userId    String @map("user_id") @db.Uuid
+  tokenHash String @unique @map("token_hash")
+
+  userAgent String? @map("user_agent")
+  ipAddress String? @map("ip_address")
+
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+  /// Set when this token is rotated. A refresh presented after rotation means
+  /// the token leaked, and the whole family gets revoked.
+  replacedByHash String? @map("replaced_by_hash")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("refresh_session")
+}
+
+model Department {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  code      String   @unique
+  about     String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  /// The one coordinator who runs this department (ER: DEPARTMENT ||--|| COORDINATOR_USER).
+  coordinatorUserId String? @unique @map("coordinator_user_id") @db.Uuid
+  coordinator       User?   @relation("DepartmentCoordinator", fields: [coordinatorUserId], references: [id], onDelete: SetNull)
+
+  members             User[]                 @relation("DepartmentMembers")
+  programs            Program[]
+  students            Student[]
+  companies           Company[]
+  jobPostings         JobPosting[]
+  eligibleForPostings JobPostingDepartment[]
+  internshipPostings  InternshipPosting[]
+  drives              Drive[]
+  eligibleForDrives   DriveDepartment[]
+
+  @@map("department")
+}
+
+model Program {
+  id             String   @id @default(uuid()) @db.Uuid
+  departmentId   String   @map("department_id") @db.Uuid
+  name           String
+  code           String
+  degreeLevel    String   @map("degree_level")
+  durationYears  Int      @map("duration_years")
+  totalSemesters Int      @map("total_semesters")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  students   Student[]
+
+  @@unique([departmentId, code])
+  @@map("program")
+}
+
+// ---------------------------------------------------------------------------
+// Student
+// ---------------------------------------------------------------------------
+
+model Student {
+  id           String  @id @default(uuid()) @db.Uuid
+  userId       String  @unique @map("user_id") @db.Uuid
+  enrollmentNo String  @unique @map("enrollment_no")
+  departmentId String  @map("department_id") @db.Uuid
+  programId    String? @map("program_id") @db.Uuid
+
+  batchStartYear Int @map("batch_start_year")
+  batchEndYear   Int @map("batch_end_year")
+
+  cgpa           Decimal @default(0) @db.Decimal(4, 2)
+  activeBacklogs Int     @default(0) @map("active_backlogs")
+
+  headline    String?
+  bio         String?
+  dateOfBirth DateTime? @map("date_of_birth") @db.Date
+  gender      String?
+  category    String?
+  addressLine String?   @map("address_line")
+  city        String?
+  state       String?
+  pincode     String?
+
+  placementStatus PlacementStatus @default(UNPLACED) @map("placement_status")
+
+  /// Denormalised scores kept for list/filter queries. The snapshot tables
+  /// below hold the history the trajectory chart and CV Studio read.
+  profileCompleteness Int @default(0) @map("profile_completeness")
+  cvScore             Int @default(0) @map("cv_score")
+  readinessScore      Int @default(0) @map("readiness_score")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  department Department @relation(fields: [departmentId], references: [id])
+  program    Program?   @relation(fields: [programId], references: [id], onDelete: SetNull)
+
+  links           StudentLink[]
+  skills          StudentSkill[]
+  projects        StudentProject[]
+  experiences     StudentExperience[]
+  certifications  StudentCertification[]
+  achievements    StudentAchievement[]
+  positions       StudentPosition[]
+  semesterRecords SemesterRecord[]
+  documents       Document[]
+  preference      StudentPreference?
+
+  applications       Application[]
+  internships        Internship[]
+  driveRegistrations DriveRegistration[]
+  companyFollows     CompanyFollow[]
+  verificationItems  VerificationItem[]
+  employmentOutcome  EmploymentOutcome?
+  courseEnrollments  CourseEnrollment[]
+  mockInterviews     MockInterview[]
+  mentorshipRequests MentorshipRequest[]
+  referralRequests   ReferralRequest[]
+  eventRegistrations EventRegistration[]
+  readinessSnapshots ReadinessSnapshot[]
+  cvScoreSnapshots   CvScoreSnapshot[]
+  badges             StudentBadge[]
+  successStories     SuccessStory[]
+
+  @@index([departmentId, placementStatus])
+  @@index([batchEndYear])
+  @@map("student")
+}
+
+model StudentLink {
+  id        String   @id @default(uuid()) @db.Uuid
+  studentId String   @map("student_id") @db.Uuid
+  label     String
+  url       String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@map("student_link")
+}
+
+/// Canonical skill registry. Shared by students and postings so the 45%
+/// skills-overlap term of the match score is a join, not a string compare.
+model Skill {
+  id       String  @id @default(uuid()) @db.Uuid
+  name     String  @unique @db.Citext
+  category String?
+
+  students    StudentSkill[]
+  jobPostings JobPostingSkill[]
+
+  @@map("skill")
+}
+
+model StudentSkill {
+  studentId   String   @map("student_id") @db.Uuid
+  skillId     String   @map("skill_id") @db.Uuid
+  proficiency Int      @default(3)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  skill   Skill   @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@id([studentId, skillId])
+  @@index([skillId])
+  @@map("student_skill")
+}
+
+model StudentProject {
+  id          String    @id @default(uuid()) @db.Uuid
+  studentId   String    @map("student_id") @db.Uuid
+  title       String
+  description String?
+  techStack   String[]  @map("tech_stack")
+  repoUrl     String?   @map("repo_url")
+  liveUrl     String?   @map("live_url")
+  startedOn   DateTime? @map("started_on") @db.Date
+  endedOn     DateTime? @map("ended_on") @db.Date
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@map("student_project")
+}
+
+model StudentExperience {
+  id             String    @id @default(uuid()) @db.Uuid
+  studentId      String    @map("student_id") @db.Uuid
+  organisation   String
+  role           String
+  employmentType String?   @map("employment_type")
+  location       String?
+  startedOn      DateTime  @map("started_on") @db.Date
+  endedOn        DateTime? @map("ended_on") @db.Date
+  isCurrent      Boolean   @default(false) @map("is_current")
+  description    String?
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@map("student_experience")
+}
+
+model StudentCertification {
+  id            String    @id @default(uuid()) @db.Uuid
+  studentId     String    @map("student_id") @db.Uuid
+  name          String
+  issuer        String
+  issuedOn      DateTime? @map("issued_on") @db.Date
+  expiresOn     DateTime? @map("expires_on") @db.Date
+  credentialId  String?   @map("credential_id")
+  credentialUrl String?   @map("credential_url")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@map("student_certification")
+}
+
+model StudentAchievement {
+  id          String    @id @default(uuid()) @db.Uuid
+  studentId   String    @map("student_id") @db.Uuid
+  title       String
+  description String?
+  achievedOn  DateTime? @map("achieved_on") @db.Date
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@map("student_achievement")
+}
+
+/// Positions of responsibility.
+model StudentPosition {
+  id           String    @id @default(uuid()) @db.Uuid
+  studentId    String    @map("student_id") @db.Uuid
+  title        String
+  organisation String
+  startedOn    DateTime? @map("started_on") @db.Date
+  endedOn      DateTime? @map("ended_on") @db.Date
+  description  String?
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@map("student_position")
+}
+
+model SemesterRecord {
+  id        String   @id @default(uuid()) @db.Uuid
+  studentId String   @map("student_id") @db.Uuid
+  semester  Int
+  sgpa      Decimal  @db.Decimal(4, 2)
+  credits   Int?
+  backlogs  Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, semester])
+  @@map("semester_record")
+}
+
+/// Only visible to recruiters once `status` is APPROVED — the department gate
+/// in the profile-verification flow.
+model Document {
+  id         String             @id @default(uuid()) @db.Uuid
+  studentId  String             @map("student_id") @db.Uuid
+  type       DocumentType
+  title      String
+  fileName   String             @map("file_name")
+  fileUrl    String             @map("file_url")
+  fileSize   Int?               @map("file_size")
+  mimeType   String?            @map("mime_type")
+  status     VerificationStatus @default(PENDING)
+  remarks    String?
+  uploadedAt DateTime           @default(now()) @map("uploaded_at") @db.Timestamptz(6)
+
+  reviewedByUserId String?   @map("reviewed_by_user_id") @db.Uuid
+  reviewedAt       DateTime? @map("reviewed_at") @db.Timestamptz(6)
+
+  student    Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  reviewedBy User?   @relation("DocumentReviewedBy", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+
+  verificationItems VerificationItem[]
+
+  @@index([studentId, status])
+  @@map("document")
+}
+
+model StudentPreference {
+  studentId          String   @id @map("student_id") @db.Uuid
+  preferredRoles     String[] @map("preferred_roles")
+  preferredLocations String[] @map("preferred_locations")
+  preferredKinds     String[] @map("preferred_kinds")
+  minExpectedCtc     Decimal? @map("min_expected_ctc") @db.Decimal(12, 2)
+  openToRelocate     Boolean  @default(true) @map("open_to_relocate")
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@map("student_preference")
+}
+
+// ---------------------------------------------------------------------------
+// Company
+// ---------------------------------------------------------------------------
+
+model Sector {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  code      String?  @unique
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  companies Company[]
+
+  @@map("sector")
+}
+
+/// `visibilityScope` + `departmentId` is the integrity check "company
+/// visibility scopes resolve": departmentId must be set when scope is
+/// DEPARTMENT_ONLY and null when UNIVERSITY_WIDE. A CHECK constraint added in
+/// the migration enforces it — Prisma can't express that.
+model Company {
+  id            String      @id @default(uuid()) @db.Uuid
+  name          String
+  slug          String      @unique
+  type          CompanyType @default(DIRECT_EMPLOYER)
+  sectorId      String?     @map("sector_id") @db.Uuid
+  about         String?
+  website       String?
+  logoUrl       String?     @map("logo_url")
+  employeeCount String?     @map("employee_count")
+  hqCity        String?     @map("hq_city")
+  hqCountry     String?     @map("hq_country")
+
+  visibilityScope     VisibilityScope    @default(UNIVERSITY_WIDE) @map("visibility_scope")
+  departmentId        String?            @map("department_id") @db.Uuid
+  verificationStatus  VerificationStatus @default(PENDING) @map("verification_status")
+  onboardingStage     OnboardingStage    @default(REGISTERED) @map("onboarding_stage")
+  isActive            Boolean            @default(false) @map("is_active")
+  isPlacementPartner  Boolean            @default(false) @map("is_placement_partner")
+  isInternshipPartner Boolean            @default(false) @map("is_internship_partner")
+
+  onboardedByUserId String? @map("onboarded_by_user_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  sector      Sector?     @relation(fields: [sectorId], references: [id], onDelete: SetNull)
+  department  Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  onboardedBy User?       @relation("CompanyOnboardedBy", fields: [onboardedByUserId], references: [id], onDelete: SetNull)
+
+  recruiters         User[]                    @relation("CompanyRecruiters")
+  contacts           CompanyContact[]
+  mou                Mou?
+  promotionRequests  CompanyPromotionRequest[]
+  followers          CompanyFollow[]
+  jobPostings        JobPosting[]
+  internshipPostings InternshipPosting[]
+  drives             Drive[]
+  messageThreads     MessageThread[]
+  employmentOutcomes EmploymentOutcome[]
+
+  @@index([visibilityScope, departmentId])
+  @@index([sectorId])
+  @@map("company")
+}
+
+model CompanyContact {
+  id          String   @id @default(uuid()) @db.Uuid
+  companyId   String   @map("company_id") @db.Uuid
+  name        String
+  designation String?
+  email       String
+  phone       String?
+  isPrimary   Boolean  @default(false) @map("is_primary")
+  isHrHead    Boolean  @default(false) @map("is_hr_head")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@map("company_contact")
+}
+
+model Mou {
+  id                   String    @id @default(uuid()) @db.Uuid
+  companyId            String    @unique @map("company_id") @db.Uuid
+  referenceNo          String    @unique @map("reference_no")
+  hiringCommitment     Int?      @map("hiring_commitment")
+  terms                String?
+  validFrom            DateTime  @map("valid_from") @db.Date
+  validTo              DateTime  @map("valid_to") @db.Date
+  signatoryName        String    @map("signatory_name")
+  signatoryDesignation String?   @map("signatory_designation")
+  signedAt             DateTime? @map("signed_at") @db.Timestamptz(6)
+  isActive             Boolean   @default(true) @map("is_active")
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("mou")
+}
+
+/// A DEPARTMENT_ONLY company asking to become UNIVERSITY_WIDE.
+model CompanyPromotionRequest {
+  id                String        @id @default(uuid()) @db.Uuid
+  companyId         String        @map("company_id") @db.Uuid
+  requestedByUserId String        @map("requested_by_user_id") @db.Uuid
+  reason            String?
+  status            RequestStatus @default(PENDING)
+  decidedByUserId   String?       @map("decided_by_user_id") @db.Uuid
+  decidedAt         DateTime?     @map("decided_at") @db.Timestamptz(6)
+  remarks           String?
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  company     Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  requestedBy User    @relation("PromotionRequestedBy", fields: [requestedByUserId], references: [id])
+  decidedBy   User?   @relation("PromotionDecidedBy", fields: [decidedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([companyId, status])
+  @@map("company_promotion_request")
+}
+
+model CompanyFollow {
+  studentId  String   @map("student_id") @db.Uuid
+  companyId  String   @map("company_id") @db.Uuid
+  followedAt DateTime @default(now()) @map("followed_at") @db.Timestamptz(6)
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@id([studentId, companyId])
+  @@index([companyId])
+  @@map("company_follow")
+}
+
+// ---------------------------------------------------------------------------
+// Job postings & applications
+// ---------------------------------------------------------------------------
+
+/// The single table replacing public `Jobs`, recruiter `RecJobs` and admin
+/// `Openings`. `source` records which console created it; `status` carries the
+/// admin approval queue (PENDING_APPROVAL -> PUBLISHED).
+model JobPosting {
+  id          String        @id @default(uuid()) @db.Uuid
+  companyId   String        @map("company_id") @db.Uuid
+  title       String
+  description String?
+  kind        PostingKind   @default(PLACEMENT)
+  status      PostingStatus @default(DRAFT)
+  source      PostingSource @default(RECRUITER)
+
+  location       String?
+  employmentType String? @map("employment_type")
+  openings       Int     @default(1)
+
+  ctcMin      Decimal? @map("ctc_min") @db.Decimal(12, 2)
+  ctcMax      Decimal? @map("ctc_max") @db.Decimal(12, 2)
+  ctcCurrency String   @default("INR") @map("ctc_currency")
+
+  // Eligibility — the inputs to the match score.
+  minCgpa            Decimal? @map("min_cgpa") @db.Decimal(4, 2)
+  maxActiveBacklogs  Int?     @map("max_active_backlogs")
+  eligibleBatchYears Int[]    @map("eligible_batch_years")
+
+  visibilityScope VisibilityScope @default(UNIVERSITY_WIDE) @map("visibility_scope")
+  departmentId    String?         @map("department_id") @db.Uuid
+
+  applicationDeadline DateTime? @map("application_deadline") @db.Timestamptz(6)
+  publishedAt         DateTime? @map("published_at") @db.Timestamptz(6)
+  closedAt            DateTime? @map("closed_at") @db.Timestamptz(6)
+
+  createdByUserId  String?   @map("created_by_user_id") @db.Uuid
+  approvedByUserId String?   @map("approved_by_user_id") @db.Uuid
+  approvedAt       DateTime? @map("approved_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  company    Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  department Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  createdBy  User?       @relation("JobPostingCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  approvedBy User?       @relation("JobPostingApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+
+  requiredSkills      JobPostingSkill[]
+  eligibleDepartments JobPostingDepartment[]
+  selectionRounds     SelectionRound[]
+  applications        Application[]
+  referralRequests    ReferralRequest[]
+
+  @@index([status, publishedAt])
+  @@index([companyId, status])
+  @@index([visibilityScope, departmentId])
+  @@map("job_posting")
+}
+
+model JobPostingSkill {
+  jobPostingId String  @map("job_posting_id") @db.Uuid
+  skillId      String  @map("skill_id") @db.Uuid
+  isMandatory  Boolean @default(false) @map("is_mandatory")
+
+  jobPosting JobPosting @relation(fields: [jobPostingId], references: [id], onDelete: Cascade)
+  skill      Skill      @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@id([jobPostingId, skillId])
+  @@index([skillId])
+  @@map("job_posting_skill")
+}
+
+/// Which departments a posting accepts. Empty set = open to all departments.
+model JobPostingDepartment {
+  jobPostingId String @map("job_posting_id") @db.Uuid
+  departmentId String @map("department_id") @db.Uuid
+
+  jobPosting JobPosting @relation(fields: [jobPostingId], references: [id], onDelete: Cascade)
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+
+  @@id([jobPostingId, departmentId])
+  @@map("job_posting_department")
+}
+
+model SelectionRound {
+  id           String    @id @default(uuid()) @db.Uuid
+  jobPostingId String    @map("job_posting_id") @db.Uuid
+  sequence     Int
+  name         String
+  type         RoundType @default(OTHER)
+  description  String?
+  maxMarks     Int?      @map("max_marks")
+  cutoffMarks  Int?      @map("cutoff_marks")
+
+  jobPosting JobPosting         @relation(fields: [jobPostingId], references: [id], onDelete: Cascade)
+  rounds     ApplicationRound[]
+  interviews Interview[]
+
+  @@unique([jobPostingId, sequence])
+  @@map("selection_round")
+}
+
+/// One student x one posting. Both the posting's scored applicant list and the
+/// recruiter's flat evaluation board are views over this table.
+model Application {
+  id           String            @id @default(uuid()) @db.Uuid
+  studentId    String            @map("student_id") @db.Uuid
+  jobPostingId String            @map("job_posting_id") @db.Uuid
+  status       ApplicationStatus @default(APPLIED)
+
+  /// Cached output of the deterministic weighted formula: skills 45, CGPA 25,
+  /// department 15, batch 10, backlogs 5. `matchBreakdown` holds the per-term
+  /// split the recruiter's score-breakdown panel shows.
+  matchScore     Int?  @map("match_score")
+  matchBreakdown Json? @map("match_breakdown")
+
+  coverNote       String?   @map("cover_note")
+  appliedAt       DateTime  @default(now()) @map("applied_at") @db.Timestamptz(6)
+  shortlistedAt   DateTime? @map("shortlisted_at") @db.Timestamptz(6)
+  withdrawnAt     DateTime? @map("withdrawn_at") @db.Timestamptz(6)
+  rejectedAt      DateTime? @map("rejected_at") @db.Timestamptz(6)
+  rejectionReason String?   @map("rejection_reason")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  student    Student    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  jobPosting JobPosting @relation(fields: [jobPostingId], references: [id], onDelete: Cascade)
+
+  rounds     ApplicationRound[]
+  interviews Interview[]
+  offer      Offer?
+
+  @@unique([studentId, jobPostingId])
+  @@index([jobPostingId, status])
+  @@index([studentId, status])
+  @@map("application")
+}
+
+/// Round marks the recruiter records on the evaluation board.
+model ApplicationRound {
+  id                String      @id @default(uuid()) @db.Uuid
+  applicationId     String      @map("application_id") @db.Uuid
+  selectionRoundId  String      @map("selection_round_id") @db.Uuid
+  marks             Decimal?    @db.Decimal(6, 2)
+  result            RoundResult @default(PENDING)
+  remarks           String?
+  evaluatedByUserId String?     @map("evaluated_by_user_id") @db.Uuid
+  evaluatedAt       DateTime?   @map("evaluated_at") @db.Timestamptz(6)
+
+  application    Application    @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  selectionRound SelectionRound @relation(fields: [selectionRoundId], references: [id], onDelete: Cascade)
+  evaluatedBy    User?          @relation(fields: [evaluatedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([applicationId, selectionRoundId])
+  @@map("application_round")
+}
+
+model Interview {
+  id               String           @id @default(uuid()) @db.Uuid
+  applicationId    String           @map("application_id") @db.Uuid
+  selectionRoundId String?          @map("selection_round_id") @db.Uuid
+  scheduledAt      DateTime         @map("scheduled_at") @db.Timestamptz(6)
+  durationMinutes  Int              @default(45) @map("duration_minutes")
+  mode             InterviewMode    @default(ON_CAMPUS)
+  venue            String?
+  meetingUrl       String?          @map("meeting_url")
+  panelMembers     String[]         @map("panel_members")
+  outcome          InterviewOutcome @default(SCHEDULED)
+  feedback         String?
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  application    Application     @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  selectionRound SelectionRound? @relation(fields: [selectionRoundId], references: [id], onDelete: SetNull)
+
+  @@index([applicationId])
+  @@index([scheduledAt])
+  @@map("interview")
+}
+
+/// Accepting an offer is the one action that writes a student's placement
+/// status from outside the student portal.
+model Offer {
+  id            String      @id @default(uuid()) @db.Uuid
+  applicationId String      @unique @map("application_id") @db.Uuid
+  referenceNo   String      @unique @map("reference_no")
+  ctc           Decimal     @db.Decimal(12, 2)
+  ctcCurrency   String      @default("INR") @map("ctc_currency")
+  designation   String?
+  location      String?
+  joiningDate   DateTime?   @map("joining_date") @db.Date
+  status        OfferStatus @default(RELEASED)
+  respondByDate DateTime?   @map("respond_by_date") @db.Date
+  releasedAt    DateTime    @default(now()) @map("released_at") @db.Timestamptz(6)
+  respondedAt   DateTime?   @map("responded_at") @db.Timestamptz(6)
+  revokedAt     DateTime?   @map("revoked_at") @db.Timestamptz(6)
+  revokeReason  String?     @map("revoke_reason")
+  joinedAt      DateTime?   @map("joined_at") @db.Timestamptz(6)
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  employmentOutcome EmploymentOutcome?
+
+  @@index([status])
+  @@map("offer")
+}
+
+// ---------------------------------------------------------------------------
+// Internships
+// ---------------------------------------------------------------------------
+
+model InternshipPosting {
+  id               String                @id @default(uuid()) @db.Uuid
+  companyId        String                @map("company_id") @db.Uuid
+  title            String
+  description      String?
+  isPaid           Boolean               @default(false) @map("is_paid")
+  stipendAmount    Decimal?              @map("stipend_amount") @db.Decimal(10, 2)
+  affiliation      InternshipAffiliation @default(INDEPENDENT)
+  minDurationWeeks Int                   @map("min_duration_weeks")
+  location         String?
+  mode             String?
+  openings         Int                   @default(1)
+  status           PostingStatus         @default(DRAFT)
+
+  visibilityScope VisibilityScope @default(UNIVERSITY_WIDE) @map("visibility_scope")
+  departmentId    String?         @map("department_id") @db.Uuid
+
+  startDate           DateTime? @map("start_date") @db.Date
+  applicationDeadline DateTime? @map("application_deadline") @db.Timestamptz(6)
+  publishedAt         DateTime? @map("published_at") @db.Timestamptz(6)
+
+  createdByUserId String? @map("created_by_user_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  company    Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  department Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  createdBy  User?       @relation("InternshipPostingCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  internships Internship[]
+
+  @@index([status, publishedAt])
+  @@index([companyId])
+  @@map("internship_posting")
+}
+
+/// The doc's MY_INTERNSHIP. Doubles as the posting's applicant list — the
+/// student's tracker and the recruiter's applicant row are the same record,
+/// which is what makes the "internship stage sync" integrity check trivially
+/// true rather than something to reconcile.
+model Internship {
+  id                  String          @id @default(uuid()) @db.Uuid
+  studentId           String          @map("student_id") @db.Uuid
+  internshipPostingId String          @map("internship_posting_id") @db.Uuid
+  stage               InternshipStage @default(APPLIED)
+
+  appliedAt  DateTime  @default(now()) @map("applied_at") @db.Timestamptz(6)
+  selectedAt DateTime? @map("selected_at") @db.Timestamptz(6)
+  startDate  DateTime? @map("start_date") @db.Date
+  endDate    DateTime? @map("end_date") @db.Date
+
+  /// Set when the department approves; the minimum-duration compliance
+  /// countdown runs from here.
+  complianceStartedAt DateTime? @map("compliance_started_at") @db.Timestamptz(6)
+
+  experienceLetterIssuedAt DateTime? @map("experience_letter_issued_at") @db.Timestamptz(6)
+  nocIssuedAt              DateTime? @map("noc_issued_at") @db.Timestamptz(6)
+  completedAt              DateTime? @map("completed_at") @db.Timestamptz(6)
+  rejectedAt               DateTime? @map("rejected_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  student           Student           @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  internshipPosting InternshipPosting @relation(fields: [internshipPostingId], references: [id], onDelete: Cascade)
+
+  approval     InternshipApproval?
+  menteeRecord MenteeRecord?
+  report       InternshipReport?
+
+  @@unique([studentId, internshipPostingId])
+  @@index([internshipPostingId, stage])
+  @@index([studentId, stage])
+  @@map("internship")
+}
+
+/// A pending request for a Letter of College Approval. Approving it is what
+/// creates the mentee record and starts the compliance clock.
+model InternshipApproval {
+  id           String             @id @default(uuid()) @db.Uuid
+  internshipId String             @unique @map("internship_id") @db.Uuid
+  status       VerificationStatus @default(PENDING)
+  requestNote  String?            @map("request_note")
+  requestedAt  DateTime           @default(now()) @map("requested_at") @db.Timestamptz(6)
+
+  // Credit mapping — collected only when affiliation is WITH_COLLEGE.
+  courseCode      String? @map("course_code")
+  creditCount     Int?    @map("credit_count")
+  evaluationBasis String? @map("evaluation_basis")
+
+  decidedByUserId String?   @map("decided_by_user_id") @db.Uuid
+  decidedAt       DateTime? @map("decided_at") @db.Timestamptz(6)
+  remarks         String?
+
+  approvalLetterNo String?   @unique @map("approval_letter_no")
+  letterIssuedAt   DateTime? @map("letter_issued_at") @db.Timestamptz(6)
+
+  internship Internship @relation(fields: [internshipId], references: [id], onDelete: Cascade)
+  decidedBy  User?      @relation(fields: [decidedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@map("internship_approval")
+}
+
+/// Does not exist until the department approves the internship — see the
+/// internship lifecycle. One per approved internship.
+model MenteeRecord {
+  id            String   @id @default(uuid()) @db.Uuid
+  internshipId  String   @unique @map("internship_id") @db.Uuid
+  facultyUserId String   @map("faculty_user_id") @db.Uuid
+  assignedAt    DateTime @default(now()) @map("assigned_at") @db.Timestamptz(6)
+
+  grade       String?
+  marks       Decimal?  @db.Decimal(6, 2)
+  remarks     String?
+  evaluatedAt DateTime? @map("evaluated_at") @db.Timestamptz(6)
+
+  internship Internship @relation(fields: [internshipId], references: [id], onDelete: Cascade)
+  faculty    User       @relation(fields: [facultyUserId], references: [id])
+
+  @@index([facultyUserId])
+  @@map("mentee_record")
+}
+
+model InternshipReport {
+  id            String   @id @default(uuid()) @db.Uuid
+  internshipId  String   @unique @map("internship_id") @db.Uuid
+  objectives    String
+  summary       String
+  learnings     String
+  attachmentUrl String?  @map("attachment_url")
+  submittedAt   DateTime @default(now()) @map("submitted_at") @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  internship Internship @relation(fields: [internshipId], references: [id], onDelete: Cascade)
+
+  @@map("internship_report")
+}
+
+// ---------------------------------------------------------------------------
+// Campus drives
+// ---------------------------------------------------------------------------
+
+model Drive {
+  id          String      @id @default(uuid()) @db.Uuid
+  companyId   String      @map("company_id") @db.Uuid
+  title       String
+  description String?
+  driveDate   DateTime    @map("drive_date") @db.Timestamptz(6)
+  venue       String?
+  mode        String?
+  status      DriveStatus @default(SCHEDULED)
+
+  visibilityScope VisibilityScope @default(UNIVERSITY_WIDE) @map("visibility_scope")
+  departmentId    String?         @map("department_id") @db.Uuid
+
+  createdByUserId String? @map("created_by_user_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  company    Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  department Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  createdBy  User?       @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  eligibleDepartments DriveDepartment[]
+  registrations       DriveRegistration[]
+
+  @@index([status, driveDate])
+  @@index([companyId])
+  @@map("drive")
+}
+
+model DriveDepartment {
+  driveId      String @map("drive_id") @db.Uuid
+  departmentId String @map("department_id") @db.Uuid
+
+  drive      Drive      @relation(fields: [driveId], references: [id], onDelete: Cascade)
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+
+  @@id([driveId, departmentId])
+  @@map("drive_department")
+}
+
+model DriveRegistration {
+  driveId      String   @map("drive_id") @db.Uuid
+  studentId    String   @map("student_id") @db.Uuid
+  registeredAt DateTime @default(now()) @map("registered_at") @db.Timestamptz(6)
+  /// Backs the conceptual QR pass; no check-in scanning exists yet.
+  passCode     String   @unique @map("pass_code")
+  attended     Boolean?
+
+  drive   Drive   @relation(fields: [driveId], references: [id], onDelete: Cascade)
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@id([driveId, studentId])
+  @@index([studentId])
+  @@map("drive_registration")
+}
+
+// ---------------------------------------------------------------------------
+// Verification queue
+// ---------------------------------------------------------------------------
+
+/// One row per thing awaiting department sign-off. `documentId` is set when
+/// the item is a document; otherwise the field/value columns describe the
+/// pending profile or status change.
+model VerificationItem {
+  id         String               @id @default(uuid()) @db.Uuid
+  studentId  String               @map("student_id") @db.Uuid
+  itemType   VerificationItemType @map("item_type")
+  documentId String?              @map("document_id") @db.Uuid
+
+  fieldName String? @map("field_name")
+  oldValue  String? @map("old_value")
+  newValue  String? @map("new_value")
+
+  status      VerificationStatus @default(PENDING)
+  submittedAt DateTime           @default(now()) @map("submitted_at") @db.Timestamptz(6)
+
+  reviewedByUserId String?   @map("reviewed_by_user_id") @db.Uuid
+  reviewedAt       DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  remarks          String?
+
+  student    Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  document   Document? @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  reviewedBy User?     @relation("VerificationReviewedBy", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([studentId, status])
+  @@index([status, submittedAt])
+  @@map("verification_item")
+}
+
+// ---------------------------------------------------------------------------
+// Notifications (outbox pattern)
+// ---------------------------------------------------------------------------
+
+/// Actions append here inside their own transaction; a dispatcher turns each
+/// event into notification rows and outbound channel sends. Keeps the dozen
+/// unrelated writers off the inbox table.
+model OutboxEvent {
+  id            String       @id @default(uuid()) @db.Uuid
+  eventType     String       @map("event_type")
+  aggregateType String       @map("aggregate_type")
+  aggregateId   String       @map("aggregate_id") @db.Uuid
+  payload       Json
+  status        OutboxStatus @default(PENDING)
+  attempts      Int          @default(0)
+  lastError     String?      @map("last_error")
+  occurredAt    DateTime     @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  processedAt   DateTime?    @map("processed_at") @db.Timestamptz(6)
+
+  notifications Notification[]
+
+  @@index([status, occurredAt])
+  @@map("outbox_event")
+}
+
+model Notification {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  eventId   String?   @map("event_id") @db.Uuid
+  category  String
+  title     String
+  body      String
+  linkUrl   String?   @map("link_url")
+  isRead    Boolean   @default(false) @map("is_read")
+  readAt    DateTime? @map("read_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user  User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  event OutboxEvent? @relation(fields: [eventId], references: [id], onDelete: SetNull)
+
+  @@index([userId, isRead, createdAt])
+  @@map("notification")
+}
+
+/// Per-channel opt-in. Offers and interview schedules ignore this and are
+/// always delivered — enforced in the dispatcher, not here.
+model NotificationPreference {
+  userId  String              @map("user_id") @db.Uuid
+  channel NotificationChannel
+  enabled Boolean             @default(true)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, channel])
+  @@map("notification_preference")
+}
+
+// ---------------------------------------------------------------------------
+// Support & feedback
+// ---------------------------------------------------------------------------
+
+model Ticket {
+  id               String         @id @default(uuid()) @db.Uuid
+  referenceNo      String         @unique @map("reference_no")
+  raisedByUserId   String         @map("raised_by_user_id") @db.Uuid
+  category         String
+  subject          String
+  description      String
+  priority         TicketPriority @default(MEDIUM)
+  status           TicketStatus   @default(OPEN)
+  slaDueAt         DateTime?      @map("sla_due_at") @db.Timestamptz(6)
+  assignedToUserId String?        @map("assigned_to_user_id") @db.Uuid
+  resolution       String?
+  resolvedAt       DateTime?      @map("resolved_at") @db.Timestamptz(6)
+  escalatedAt      DateTime?      @map("escalated_at") @db.Timestamptz(6)
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  raisedBy   User  @relation("TicketRaisedBy", fields: [raisedByUserId], references: [id], onDelete: Cascade)
+  assignedTo User? @relation("TicketAssignedTo", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+
+  comments TicketComment[]
+
+  @@index([status, slaDueAt])
+  @@index([raisedByUserId])
+  @@map("ticket")
+}
+
+model TicketComment {
+  id           String   @id @default(uuid()) @db.Uuid
+  ticketId     String   @map("ticket_id") @db.Uuid
+  authorUserId String   @map("author_user_id") @db.Uuid
+  body         String
+  isInternal   Boolean  @default(false) @map("is_internal")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author User   @relation(fields: [authorUserId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+  @@map("ticket_comment")
+}
+
+model Survey {
+  id              String        @id @default(uuid()) @db.Uuid
+  title           String
+  description     String?
+  audience        String
+  status          ContentStatus @default(DRAFT)
+  opensAt         DateTime?     @map("opens_at") @db.Timestamptz(6)
+  closesAt        DateTime?     @map("closes_at") @db.Timestamptz(6)
+  createdByUserId String?       @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  createdBy User? @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  questions         SurveyQuestion[]
+  responses         SurveyResponse[]
+  closedLoopActions ClosedLoopAction[]
+
+  @@map("survey")
+}
+
+model SurveyQuestion {
+  id       String  @id @default(uuid()) @db.Uuid
+  surveyId String  @map("survey_id") @db.Uuid
+  sequence Int
+  text     String
+  type     String
+  options  Json?
+  required Boolean @default(true)
+
+  survey  Survey         @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  answers SurveyAnswer[]
+
+  @@unique([surveyId, sequence])
+  @@map("survey_question")
+}
+
+model SurveyResponse {
+  id          String   @id @default(uuid()) @db.Uuid
+  surveyId    String   @map("survey_id") @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  submittedAt DateTime @default(now()) @map("submitted_at") @db.Timestamptz(6)
+
+  survey  Survey         @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  answers SurveyAnswer[]
+
+  @@unique([surveyId, userId])
+  @@map("survey_response")
+}
+
+model SurveyAnswer {
+  id         String @id @default(uuid()) @db.Uuid
+  responseId String @map("response_id") @db.Uuid
+  questionId String @map("question_id") @db.Uuid
+  value      String
+
+  response SurveyResponse @relation(fields: [responseId], references: [id], onDelete: Cascade)
+  question SurveyQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([responseId, questionId])
+  @@map("survey_answer")
+}
+
+/// "What was fixed because of feedback" — Admin's closed-loop list.
+model ClosedLoopAction {
+  id          String    @id @default(uuid()) @db.Uuid
+  surveyId    String?   @map("survey_id") @db.Uuid
+  title       String
+  description String?
+  ownerUserId String?   @map("owner_user_id") @db.Uuid
+  status      String    @default("OPEN")
+  closedAt    DateTime? @map("closed_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  survey Survey? @relation(fields: [surveyId], references: [id], onDelete: SetNull)
+  owner  User?   @relation(fields: [ownerUserId], references: [id], onDelete: SetNull)
+
+  @@map("closed_loop_action")
+}
+
+// ---------------------------------------------------------------------------
+// Employment outcomes
+// ---------------------------------------------------------------------------
+
+model EmploymentOutcome {
+  id              String                  @id @default(uuid()) @db.Uuid
+  studentId       String                  @unique @map("student_id") @db.Uuid
+  offerId         String?                 @unique @map("offer_id") @db.Uuid
+  companyId       String?                 @map("company_id") @db.Uuid
+  status          EmploymentOutcomeStatus @default(ACTIVE)
+  currentEmployer String?                 @map("current_employer")
+  currentRole     String?                 @map("current_role")
+  lastCheckInAt   DateTime?               @map("last_check_in_at") @db.Timestamptz(6)
+  notes           String?
+  updatedByUserId String?                 @map("updated_by_user_id") @db.Uuid
+  createdAt       DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime                @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  student   Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  offer     Offer?   @relation(fields: [offerId], references: [id], onDelete: SetNull)
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  updatedBy User?    @relation(fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@map("employment_outcome")
+}
+
+// ---------------------------------------------------------------------------
+// Website content
+// ---------------------------------------------------------------------------
+
+model NewsItem {
+  id           String        @id @default(uuid()) @db.Uuid
+  title        String
+  slug         String        @unique
+  excerpt      String?
+  body         String
+  category     String?
+  imageUrl     String?       @map("image_url")
+  status       ContentStatus @default(DRAFT)
+  publishedAt  DateTime?     @map("published_at") @db.Timestamptz(6)
+  authorUserId String?       @map("author_user_id") @db.Uuid
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  author User? @relation(fields: [authorUserId], references: [id], onDelete: SetNull)
+
+  @@index([status, publishedAt])
+  @@map("news_item")
+}
+
+model EventItem {
+  id          String  @id @default(uuid()) @db.Uuid
+  title       String
+  slug        String  @unique
+  description String?
+  /// Separates public campus events from the alumni-network events tab.
+  audience    String  @default("PUBLIC")
+
+  startsAt        DateTime      @map("starts_at") @db.Timestamptz(6)
+  endsAt          DateTime?     @map("ends_at") @db.Timestamptz(6)
+  venue           String?
+  imageUrl        String?       @map("image_url")
+  status          ContentStatus @default(DRAFT)
+  createdByUserId String?       @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  createdBy User? @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  galleryItems  GalleryItem[]
+  registrations EventRegistration[]
+
+  @@index([status, startsAt])
+  @@map("event_item")
+}
+
+model EventRegistration {
+  eventId      String   @map("event_id") @db.Uuid
+  studentId    String   @map("student_id") @db.Uuid
+  registeredAt DateTime @default(now()) @map("registered_at") @db.Timestamptz(6)
+
+  event   EventItem @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  student Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@id([eventId, studentId])
+  @@map("event_registration")
+}
+
+/// Admin broadcast: lands on the public site and fans out to every targeted
+/// student's inbox via an outbox event.
+model Broadcast {
+  id             String    @id @default(uuid()) @db.Uuid
+  title          String
+  body           String
+  audience       String
+  sentByUserId   String?   @map("sent_by_user_id") @db.Uuid
+  sentAt         DateTime? @map("sent_at") @db.Timestamptz(6)
+  recipientCount Int       @default(0) @map("recipient_count")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  sentBy User? @relation(fields: [sentByUserId], references: [id], onDelete: SetNull)
+
+  @@map("broadcast")
+}
+
+model GalleryItem {
+  id           String   @id @default(uuid()) @db.Uuid
+  type         String
+  url          String
+  thumbnailUrl String?  @map("thumbnail_url")
+  caption      String?
+  album        String?
+  eventId      String?  @map("event_id") @db.Uuid
+  sequence     Int      @default(0)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  event EventItem? @relation(fields: [eventId], references: [id], onDelete: SetNull)
+
+  @@map("gallery_item")
+}
+
+/// Placement cell staff directory on the public site.
+model TeamMember {
+  id                 String   @id @default(uuid()) @db.Uuid
+  name               String
+  designation        String
+  email              String?
+  phone              String?
+  photoUrl           String?  @map("photo_url")
+  isPlacementOfficer Boolean  @default(false) @map("is_placement_officer")
+  sequence           Int      @default(0)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("team_member")
+}
+
+// ---------------------------------------------------------------------------
+// Training
+// ---------------------------------------------------------------------------
+
+model Course {
+  id            String   @id @default(uuid()) @db.Uuid
+  title         String
+  provider      String?
+  description   String?
+  category      String?
+  level         String?
+  durationHours Int?     @map("duration_hours")
+  url           String?
+  thumbnailUrl  String?  @map("thumbnail_url")
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  enrollments CourseEnrollment[]
+
+  @@map("course")
+}
+
+model CourseEnrollment {
+  id          String           @id @default(uuid()) @db.Uuid
+  studentId   String           @map("student_id") @db.Uuid
+  courseId    String           @map("course_id") @db.Uuid
+  status      EnrollmentStatus @default(ENROLLED)
+  progressPct Int              @default(0) @map("progress_pct")
+  enrolledAt  DateTime         @default(now()) @map("enrolled_at") @db.Timestamptz(6)
+  completedAt DateTime?        @map("completed_at") @db.Timestamptz(6)
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  course  Course  @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, courseId])
+  @@map("course_enrollment")
+}
+
+model MockInterview {
+  id                String   @id @default(uuid()) @db.Uuid
+  studentId         String   @map("student_id") @db.Uuid
+  type              String
+  scheduledAt       DateTime @map("scheduled_at") @db.Timestamptz(6)
+  durationMinutes   Int      @default(45) @map("duration_minutes")
+  interviewerUserId String?  @map("interviewer_user_id") @db.Uuid
+  meetingUrl        String?  @map("meeting_url")
+  status            String   @default("BOOKED")
+  score             Decimal? @db.Decimal(5, 2)
+  feedback          String?
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  student     Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  interviewer User?   @relation("MockInterviewer", fields: [interviewerUserId], references: [id], onDelete: SetNull)
+
+  @@index([studentId])
+  @@map("mock_interview")
+}
+
+/// Practice & resources tab.
+model Resource {
+  id          String   @id @default(uuid()) @db.Uuid
+  title       String
+  type        String
+  category    String?
+  url         String
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("resource")
+}
+
+// ---------------------------------------------------------------------------
+// Alumni & network
+// ---------------------------------------------------------------------------
+
+/// Most alumni are directory entries without a portal login, so there is no
+/// FK to `user` here.
+model AlumniProfile {
+  id                String   @id @default(uuid()) @db.Uuid
+  fullName          String   @map("full_name")
+  email             String?
+  batchYear         Int      @map("batch_year")
+  departmentName    String?  @map("department_name")
+  currentCompany    String?  @map("current_company")
+  currentRole       String?  @map("current_role")
+  location          String?
+  linkedinUrl       String?  @map("linkedin_url")
+  photoUrl          String?  @map("photo_url")
+  isMentor          Boolean  @default(false) @map("is_mentor")
+  isOpenToReferrals Boolean  @default(false) @map("is_open_to_referrals")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  mentorshipRequests MentorshipRequest[]
+  referralRequests   ReferralRequest[]
+  successStories     SuccessStory[]
+
+  @@index([isMentor])
+  @@map("alumni_profile")
+}
+
+model MentorshipRequest {
+  id          String        @id @default(uuid()) @db.Uuid
+  studentId   String        @map("student_id") @db.Uuid
+  alumniId    String        @map("alumni_id") @db.Uuid
+  message     String?
+  status      RequestStatus @default(PENDING)
+  respondedAt DateTime?     @map("responded_at") @db.Timestamptz(6)
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  student Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  alumni  AlumniProfile @relation(fields: [alumniId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, alumniId])
+  @@map("mentorship_request")
+}
+
+model ReferralRequest {
+  id           String        @id @default(uuid()) @db.Uuid
+  studentId    String        @map("student_id") @db.Uuid
+  alumniId     String        @map("alumni_id") @db.Uuid
+  jobPostingId String?       @map("job_posting_id") @db.Uuid
+  companyName  String?       @map("company_name")
+  message      String?
+  status       RequestStatus @default(PENDING)
+  respondedAt  DateTime?     @map("responded_at") @db.Timestamptz(6)
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  student    Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  alumni     AlumniProfile @relation(fields: [alumniId], references: [id], onDelete: Cascade)
+  jobPosting JobPosting?   @relation(fields: [jobPostingId], references: [id], onDelete: SetNull)
+
+  @@index([studentId])
+  @@map("referral_request")
+}
+
+model SuccessStory {
+  id          String        @id @default(uuid()) @db.Uuid
+  title       String
+  body        String
+  studentId   String?       @map("student_id") @db.Uuid
+  alumniId    String?       @map("alumni_id") @db.Uuid
+  imageUrl    String?       @map("image_url")
+  status      ContentStatus @default(DRAFT)
+  publishedAt DateTime?     @map("published_at") @db.Timestamptz(6)
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  student Student?       @relation(fields: [studentId], references: [id], onDelete: SetNull)
+  alumni  AlumniProfile? @relation(fields: [alumniId], references: [id], onDelete: SetNull)
+
+  @@map("success_story")
+}
+
+// ---------------------------------------------------------------------------
+// Recruiter <-> Placement Cell messaging
+// ---------------------------------------------------------------------------
+
+model MessageThread {
+  id              String   @id @default(uuid()) @db.Uuid
+  subject         String
+  companyId       String?  @map("company_id") @db.Uuid
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  isClosed        Boolean  @default(false) @map("is_closed")
+  lastMessageAt   DateTime @default(now()) @map("last_message_at") @db.Timestamptz(6)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy User     @relation("ThreadCreatedBy", fields: [createdByUserId], references: [id])
+
+  messages Message[]
+
+  @@index([companyId])
+  @@map("message_thread")
+}
+
+model Message {
+  id           String    @id @default(uuid()) @db.Uuid
+  threadId     String    @map("thread_id") @db.Uuid
+  senderUserId String    @map("sender_user_id") @db.Uuid
+  body         String
+  sentAt       DateTime  @default(now()) @map("sent_at") @db.Timestamptz(6)
+  readAt       DateTime? @map("read_at") @db.Timestamptz(6)
+
+  thread MessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  sender User          @relation(fields: [senderUserId], references: [id], onDelete: Cascade)
+
+  @@index([threadId, sentAt])
+  @@map("message")
+}
+
+// ---------------------------------------------------------------------------
+// Scores, badges, settings
+// ---------------------------------------------------------------------------
+
+/// History behind the readiness trajectory chart.
+model ReadinessSnapshot {
+  id         String   @id @default(uuid()) @db.Uuid
+  studentId  String   @map("student_id") @db.Uuid
+  score      Int
+  breakdown  Json?
+  capturedAt DateTime @default(now()) @map("captured_at") @db.Timestamptz(6)
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, capturedAt])
+  @@map("readiness_snapshot")
+}
+
+/// CV Studio's score out of 100. `breakdown` holds the 8 section scores and
+/// the weights the sliders were on when it was computed.
+model CvScoreSnapshot {
+  id          String   @id @default(uuid()) @db.Uuid
+  studentId   String   @map("student_id") @db.Uuid
+  total       Int
+  breakdown   Json
+  suggestions Json?
+  computedAt  DateTime @default(now()) @map("computed_at") @db.Timestamptz(6)
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, computedAt])
+  @@map("cv_score_snapshot")
+}
+
+model Badge {
+  id          String  @id @default(uuid()) @db.Uuid
+  code        String  @unique
+  name        String
+  description String?
+  iconUrl     String? @map("icon_url")
+
+  students StudentBadge[]
+
+  @@map("badge")
+}
+
+model StudentBadge {
+  studentId String   @map("student_id") @db.Uuid
+  badgeId   String   @map("badge_id") @db.Uuid
+  earnedAt  DateTime @default(now()) @map("earned_at") @db.Timestamptz(6)
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  badge   Badge   @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+
+  @@id([studentId, badgeId])
+  @@map("student_badge")
+}
+
+/// Admin Settings: placement policy (offer cap, minimum CGPA, academic year)
+/// and ERP integration status. Key/value so policy can grow without a
+/// migration.
+model AppSetting {
+  key             String   @id
+  value           Json
+  description     String?
+  updatedByUserId String?  @map("updated_by_user_id") @db.Uuid
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  updatedBy User? @relation(fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  @@map("app_setting")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  action      String
+  entityType  String   @map("entity_type")
+  entityId    String?  @map("entity_id")
+  changes     Json?
+  ipAddress   String?  @map("ip_address")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  actor User? @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([actorUserId, createdAt])
+  @@map("audit_log")
+}
