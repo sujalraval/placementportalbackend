@@ -36,4 +36,4 @@ jobs:
             npm run build
             
             # Restart PM2 process
-            pm2 restart placement-backend || pm2 start dist/server.js --name "placement-backend" --cwd /home/gujaratuniversity-placement/htdocs/placement_backend
+            npx pm2 restart placement-backend || npx pm2 start dist/server.js --name "placement-backend" --cwd /home/gujaratuniversity-placement/htdocs/placement_backend
