@@ -351,6 +351,18 @@ model AuthIdentity {
   @@map("auth_identity")
 }
 
+/// OTP verification for email login
+model OtpVerification {
+  id        String   @id @default(uuid()) @db.Uuid
+  email     String
+  otp       String
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  verified  Boolean  @default(false)
+
+  @@index([email])
+}
+
 /// One row per issued refresh token, so a session can actually be revoked —
 /// a stateless refresh JWT stays valid until it expires no matter what.
 /// Stores a SHA-256 of the token, never the token itself: a leaked database

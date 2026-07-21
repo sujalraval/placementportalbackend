@@ -3,7 +3,7 @@ import * as controller from './auth.controller.ts';
 import * as oauth from './oauth.controller.ts';
 import { requireAuth } from '../../middleware/authenticate.ts';
 
-export const authRouter = Router();
+const authRouter = Router();
 
 // --- Local email/password ---------------------------------------------------
 authRouter.post('/login', controller.login);
@@ -11,6 +11,10 @@ authRouter.post('/register/student', controller.registerStudent);
 authRouter.post('/register/recruiter', controller.registerRecruiter);
 authRouter.post('/refresh', controller.refresh);
 authRouter.post('/logout', controller.logout);
+
+// OTP Routes
+authRouter.post('/otp/request', controller.requestOtp);
+authRouter.post('/otp/verify', controller.verifyOtp);
 
 // --- Federated sign-in ------------------------------------------------------
 // Available to every role: students and recruiters as asked for, and staff on
@@ -31,3 +35,5 @@ authRouter.post('/logout-everywhere', requireAuth, controller.logoutEverywhere);
 // point; see the note on AuthIdentity in schema.prisma.
 authRouter.get('/oauth/:provider/link/start', requireAuth, oauth.start);
 authRouter.get('/oauth/:provider/link/callback', requireAuth, oauth.linkCallback);
+
+export { authRouter };

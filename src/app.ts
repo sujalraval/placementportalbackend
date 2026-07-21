@@ -29,7 +29,20 @@ export function createApp() {
 
   app.use('/api/v1', router);
 
-  app.use(notFoundHandler);
+  // Serve Frontend Static Files in Production
+  if (isProduction) {
+    const frontendPath = process.env.FRONTEND_BUILD_PATH || '../placement.gujaratuniversity.ac.in/dist';
+    const path = await import('path');
+    const resolvedPath = path.resolve(frontendPath);
+    
+    app.use(express.static(resolvedPath));
+    app.get('*', (req, res) => {
+      res.sendFile(path.resolve(resolvedPath, 'index.html'));
+    });
+  } else {
+    app.use(notFoundHandler);
+  }
+
   app.use(errorHandler);
 
   return app;

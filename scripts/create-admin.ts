@@ -24,7 +24,8 @@ async function main() {
       email,
       fullName,
       passwordHash,
-      role: 'ADMIN'
+      role: 'ADMIN',
+      status: 'ACTIVE'
     }
   });
 

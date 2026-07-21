@@ -49,7 +49,27 @@ export const refresh: RequestHandler = async (req, res) => {
 export const logout: RequestHandler = async (req, res) => {
   const { refreshToken } = refreshBody.parse(req.body);
   await sessions.revokeSession(refreshToken);
-  res.status(204).send();
+  res.status(204).end();
+};
+
+import { requestOtp as reqOtpService, verifyOtp as verifyOtpService } from './otp.service.ts';
+
+export const requestOtp: RequestHandler = async (req, res) => {
+  const email = req.body.email;
+  if (!email || typeof email !== 'string') {
+    throw ApiError.badRequest('Email is required');
+  }
+  const result = await reqOtpService(email);
+  res.json({ data: result });
+};
+
+export const verifyOtp: RequestHandler = async (req, res) => {
+  const { email, otp } = req.body;
+  if (!email || !otp) {
+    throw ApiError.badRequest('Email and OTP are required');
+  }
+  const result = await verifyOtpService(email, otp);
+  res.json({ data: result });
 };
 
 export const logoutEverywhere: RequestHandler = async (req, res) => {
