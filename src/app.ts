@@ -36,7 +36,7 @@ export function createApp() {
     const resolvedPath = path.resolve(frontendPath);
     
     app.use(express.static(resolvedPath));
-    app.get('*', (req, res) => {
+    app.get(/.*/, (req, res) => {
       res.sendFile(path.resolve(resolvedPath, 'index.html'));
     });
   } else {
