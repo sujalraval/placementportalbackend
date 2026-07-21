@@ -6,6 +6,7 @@ import morgan from 'morgan';
 import { env, isProduction } from './config/env.ts';
 import { router } from './routes/index.ts';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.ts';
+import path from 'path';
 
 export function createApp() {
   const app = express();
@@ -32,7 +33,6 @@ export function createApp() {
   // Serve Frontend Static Files in Production
   if (isProduction) {
     const frontendPath = process.env.FRONTEND_BUILD_PATH || '../placement.gujaratuniversity.ac.in/dist';
-    const path = await import('path');
     const resolvedPath = path.resolve(frontendPath);
     
     app.use(express.static(resolvedPath));
