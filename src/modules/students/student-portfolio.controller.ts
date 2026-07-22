@@ -10,7 +10,10 @@ import {
   createPositionBody,
   createProjectBody,
   itemIdParam,
+  updateAchievementBody,
+  updateCertificationBody,
   updateExperienceBody,
+  updatePositionBody,
   updateProjectBody,
   updateSkillBody,
   upsertSemesterRecordBody,
@@ -122,6 +125,12 @@ export const createCertification: RequestHandler = async (req, res) => {
     .json({ data: await service.createCertification(currentStudentId(req.user), body) });
 };
 
+export const updateCertification: RequestHandler = async (req, res) => {
+  const { itemId } = itemIdParam.parse(req.params);
+  const body = updateCertificationBody.parse(req.body);
+  res.json({ data: await service.updateCertification(currentStudentId(req.user), itemId, body) });
+};
+
 export const deleteCertification: RequestHandler = async (req, res) => {
   const { itemId } = itemIdParam.parse(req.params);
   await service.deleteCertification(currentStudentId(req.user), itemId);
@@ -139,6 +148,12 @@ export const createAchievement: RequestHandler = async (req, res) => {
   res.status(201).json({ data: await service.createAchievement(currentStudentId(req.user), body) });
 };
 
+export const updateAchievement: RequestHandler = async (req, res) => {
+  const { itemId } = itemIdParam.parse(req.params);
+  const body = updateAchievementBody.parse(req.body);
+  res.json({ data: await service.updateAchievement(currentStudentId(req.user), itemId, body) });
+};
+
 export const deleteAchievement: RequestHandler = async (req, res) => {
   const { itemId } = itemIdParam.parse(req.params);
   await service.deleteAchievement(currentStudentId(req.user), itemId);
@@ -154,6 +169,12 @@ export const listPositions: RequestHandler = async (req, res) => {
 export const createPosition: RequestHandler = async (req, res) => {
   const body = createPositionBody.parse(req.body);
   res.status(201).json({ data: await service.createPosition(currentStudentId(req.user), body) });
+};
+
+export const updatePosition: RequestHandler = async (req, res) => {
+  const { itemId } = itemIdParam.parse(req.params);
+  const body = updatePositionBody.parse(req.body);
+  res.json({ data: await service.updatePosition(currentStudentId(req.user), itemId, body) });
 };
 
 export const deletePosition: RequestHandler = async (req, res) => {

@@ -15,11 +15,17 @@ export const loginBody = z.object({
   password: z.string().min(1, 'Password is required'),
 });
 
+export const loginOtpBody = z.object({
+  email,
+  otp: z.string().length(6, 'OTP must be exactly 6 digits'),
+});
+
 /// Mirrors the public site's student registration form: name, enrolment
 /// number, department, CGPA, university email, password.
 export const registerStudentBody = z.object({
   fullName: z.string().trim().min(2).max(120),
   email,
+  otp: z.string().length(6, 'OTP must be exactly 6 digits'),
   password,
   phone: z.string().trim().max(20).optional(),
   enrollmentNo: z.string().trim().min(3).max(32),
@@ -97,6 +103,7 @@ export const completeRecruiterBody = z.object({
 });
 
 export type LoginInput = z.infer<typeof loginBody>;
+export type LoginOtpInput = z.infer<typeof loginOtpBody>;
 export type RegisterStudentInput = z.infer<typeof registerStudentBody>;
 export type RegisterRecruiterInput = z.infer<typeof registerRecruiterBody>;
 export type CompleteStudentInput = z.infer<typeof completeStudentBody>;

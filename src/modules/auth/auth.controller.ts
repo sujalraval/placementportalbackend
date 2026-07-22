@@ -4,6 +4,7 @@ import * as sessions from './session.service.ts';
 import { ApiError } from '../../lib/http-error.ts';
 import {
   loginBody,
+  loginOtpBody,
   refreshBody,
   registerRecruiterBody,
   registerStudentRefined,
@@ -19,14 +20,18 @@ export const login: RequestHandler = async (req, res) => {
   res.json({ data: { user, ...session } });
 };
 
+export const loginOtp: RequestHandler = async (req, res) => {
+  const body = loginOtpBody.parse(req.body);
+  const { user, session } = await service.loginWithOtp(body, context(req));
+  res.json({ data: { user, ...session } });
+};
+
 export const registerStudent: RequestHandler = async (req, res) => {
   const body = registerStudentRefined.parse(req.body);
-  const user = await service.registerStudent(body);
-  // 201, but no session: the account is PENDING until the department approves
-  // it, and handing out tokens here would make that gate decorative.
+  const { user, session } = await service.registerStudent(body, context(req));
   res.status(201).json({
-    data: { user },
-    message: 'Registration received. Your account is pending approval.',
+    data: { user, ...session },
+    message: 'Registration successful. You are now logged in.',
   });
 };
 

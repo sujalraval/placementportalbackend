@@ -26,6 +26,8 @@ export const listStudentsQuery = z.object({
 /// Corrections to those go through `academicRecordBody` (staff-only, below).
 export const updateOwnProfileBody = z
   .object({
+    fullName: z.string().trim().max(160),
+    phone: z.string().trim().max(20),
     headline: z.string().trim().max(160),
     bio: z.string().trim().max(2000),
     dateOfBirth: z.iso.date(),
@@ -35,6 +37,8 @@ export const updateOwnProfileBody = z
     city: z.string().trim().max(80),
     state: z.string().trim().max(80),
     pincode: z.string().trim().max(12),
+    cgpa: z.number().min(0).max(10),
+    activeBacklogs: z.number().int().min(0),
   })
   .partial()
   .refine((v) => Object.keys(v).length > 0, {

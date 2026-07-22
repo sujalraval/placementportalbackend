@@ -39,14 +39,17 @@ studentRouter.delete('/me/experience/:itemId', self, portfolio.deleteExperience)
 
 studentRouter.get('/me/certifications', self, portfolio.listCertifications);
 studentRouter.post('/me/certifications', self, portfolio.createCertification);
+studentRouter.patch('/me/certifications/:itemId', self, portfolio.updateCertification);
 studentRouter.delete('/me/certifications/:itemId', self, portfolio.deleteCertification);
 
 studentRouter.get('/me/achievements', self, portfolio.listAchievements);
 studentRouter.post('/me/achievements', self, portfolio.createAchievement);
+studentRouter.patch('/me/achievements/:itemId', self, portfolio.updateAchievement);
 studentRouter.delete('/me/achievements/:itemId', self, portfolio.deleteAchievement);
 
 studentRouter.get('/me/positions', self, portfolio.listPositions);
 studentRouter.post('/me/positions', self, portfolio.createPosition);
+studentRouter.patch('/me/positions/:itemId', self, portfolio.updatePosition);
 studentRouter.delete('/me/positions/:itemId', self, portfolio.deletePosition);
 
 studentRouter.get('/me/semester-records', self, portfolio.listSemesterRecords);

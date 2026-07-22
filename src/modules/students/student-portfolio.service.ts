@@ -8,8 +8,10 @@ import type {
   CreateExperienceInput,
   CreateLinkInput,
   CreatePositionInput,
-  CreateProjectInput,
+  UpdateAchievementInput,
+  UpdateCertificationInput,
   UpdateExperienceInput,
+  UpdatePositionInput,
   UpdateProjectInput,
   UpdateSkillInput,
   UpsertSemesterRecordInput,
@@ -178,6 +180,19 @@ export const createCertification = (studentId: string, input: CreateCertificatio
     },
   });
 
+export async function updateCertification(
+  studentId: string,
+  id: string,
+  input: UpdateCertificationInput,
+) {
+  const { count } = await prisma.studentCertification.updateMany({
+    where: { id, studentId },
+    data: { ...input, issuedOn: toDate(input.issuedOn), expiresOn: toDate(input.expiresOn) },
+  });
+  await assertOwned(count);
+  return prisma.studentCertification.findUniqueOrThrow({ where: { id } });
+}
+
 export async function deleteCertification(studentId: string, id: string) {
   const { count } = await prisma.studentCertification.deleteMany({ where: { id, studentId } });
   await assertOwned(count);
@@ -192,6 +207,19 @@ export const createAchievement = (studentId: string, input: CreateAchievementInp
   prisma.studentAchievement.create({
     data: { studentId, ...input, achievedOn: toDate(input.achievedOn) },
   });
+
+export async function updateAchievement(
+  studentId: string,
+  id: string,
+  input: UpdateAchievementInput,
+) {
+  const { count } = await prisma.studentAchievement.updateMany({
+    where: { id, studentId },
+    data: { ...input, achievedOn: toDate(input.achievedOn) },
+  });
+  await assertOwned(count);
+  return prisma.studentAchievement.findUniqueOrThrow({ where: { id } });
+}
 
 export async function deleteAchievement(studentId: string, id: string) {
   const { count } = await prisma.studentAchievement.deleteMany({ where: { id, studentId } });
@@ -214,6 +242,19 @@ export async function createPosition(studentId: string, input: CreatePositionInp
   });
   await recomputeProfileCompleteness(studentId);
   return position;
+}
+
+export async function updatePosition(
+  studentId: string,
+  id: string,
+  input: UpdatePositionInput,
+) {
+  const { count } = await prisma.studentPosition.updateMany({
+    where: { id, studentId },
+    data: { ...input, startedOn: toDate(input.startedOn), endedOn: toDate(input.endedOn) },
+  });
+  await assertOwned(count);
+  return prisma.studentPosition.findUniqueOrThrow({ where: { id } });
 }
 
 export async function deletePosition(studentId: string, id: string) {

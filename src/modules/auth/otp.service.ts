@@ -4,14 +4,22 @@ import { ApiError } from '../../lib/http-error.ts';
 import crypto from 'crypto';
 
 // In a real application, these would be configured via environment variables
-// SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
+const isGmail = process.env.SMTP_HOST?.includes('gmail.com');
+
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.ethereal.email',
-  port: parseInt(process.env.SMTP_PORT || '587', 10),
+  ...(isGmail 
+    ? { service: 'gmail' } 
+    : {
+        host: process.env.SMTP_HOST || 'smtp.ethereal.email',
+        port: parseInt(process.env.SMTP_PORT || '587', 10),
+        secure: parseInt(process.env.SMTP_PORT || '587', 10) === 465,
+      }),
   auth: {
     user: process.env.SMTP_USER || 'test@ethereal.email',
     pass: process.env.SMTP_PASS || 'password',
   },
+  logger: process.env.NODE_ENV !== 'production',
+  debug: process.env.NODE_ENV !== 'production',
 });
 
 export async function requestOtp(email: string) {
@@ -20,6 +28,11 @@ export async function requestOtp(email: string) {
   
   // Set expiration to 10 minutes from now
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+  // In development, print the OTP to the console so it's easy to copy
+  console.log('\n=============================================');
+  console.log(`🔑 DEV OTP CODE FOR ${email}: ${otp}`);
+  console.log('=============================================\n');
 
   // Store in database
   await prisma.otpVerification.create({
@@ -32,8 +45,9 @@ export async function requestOtp(email: string) {
 
   // Send Email
   try {
+    const fromAddress = process.env.EMAIL_FROM || process.env.SMTP_USER || '"Placement Portal" <noreply@placementportal.edu>';
     const info = await transporter.sendMail({
-      from: process.env.EMAIL_FROM || '"Placement Portal" <noreply@placementportal.edu>',
+      from: fromAddress,
       to: email,
       subject: 'Your Login Code',
       text: `Your login code is: ${otp}. It will expire in 10 minutes.`,
@@ -64,7 +78,7 @@ export async function requestOtp(email: string) {
 export async function verifyOtp(email: string, otp: string) {
   // Find the most recent OTP for this email
   const record = await prisma.otpVerification.findFirst({
-    where: { email, verified: false },
+    where: { email },
     orderBy: { createdAt: 'desc' },
   });
 
@@ -80,11 +94,15 @@ export async function verifyOtp(email: string, otp: string) {
     throw ApiError.badRequest('Invalid OTP.');
   }
 
-  // Mark as verified
-  await prisma.otpVerification.update({
-    where: { id: record.id },
-    data: { verified: true },
-  });
+  // If it's not yet verified, mark it as verified.
+  // We allow already verified OTPs to be used again before they expire 
+  // because the frontend does a two-step registration (verify first, then register).
+  if (!record.verified) {
+    await prisma.otpVerification.update({
+      where: { id: record.id },
+      data: { verified: true },
+    });
+  }
 
   return { message: 'Email verified successfully', recordId: record.id };
 }

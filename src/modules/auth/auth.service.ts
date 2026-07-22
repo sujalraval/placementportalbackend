@@ -2,9 +2,11 @@ import { prisma } from '../../lib/prisma.ts';
 import { ApiError } from '../../lib/http-error.ts';
 import { fakeVerify, hashPassword, verifyPassword } from './password.ts';
 import { issueSession } from './session.service.ts';
+import { verifyOtp } from './otp.service.ts';
 import type { IssuedSession } from './session.service.ts';
 import type {
   LoginInput,
+  LoginOtpInput,
   RegisterRecruiterInput,
   RegisterStudentInput,
 } from './auth.schema.ts';
@@ -74,7 +76,40 @@ export async function login(
   return { user: publicUser, session };
 }
 
-export async function registerStudent(input: RegisterStudentInput): Promise<PublicUser> {
+export async function loginWithOtp(
+  input: LoginOtpInput,
+  ctx: RequestContext,
+): Promise<{ user: PublicUser; session: IssuedSession }> {
+  // 1. Verify OTP first (throws ApiError if invalid/expired)
+  await verifyOtp(input.email, input.otp);
+
+  // 2. Ensure user exists
+  const user = await prisma.user.findUnique({
+    where: { email: input.email },
+    select: { ...publicUserSelect },
+  });
+
+  if (!user) {
+    throw ApiError.unauthorized('Account does not exist.');
+  }
+
+  // 3. Ensure they can sign in (ACTIVE status)
+  assertCanSignIn(user);
+
+  // 4. Issue session
+  const session = await issueSession(user, ctx);
+  await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+
+  return { user, session };
+}
+
+export async function registerStudent(
+  input: RegisterStudentInput,
+  ctx: RequestContext,
+): Promise<{ user: PublicUser; session: IssuedSession }> {
+  // 1. Verify OTP before doing anything else
+  await verifyOtp(input.email, input.otp);
+
   const department = await prisma.department.findUnique({
     where: { id: input.departmentId },
     select: { id: true },
@@ -95,14 +130,14 @@ export async function registerStudent(input: RegisterStudentInput): Promise<Publ
 
   // Student rows carry the department; the user row must not (the
   // user_role_scope_consistent CHECK enforces exactly that).
-  return prisma.user.create({
+  const user = await prisma.user.create({
     data: {
       email: input.email,
       passwordHash,
       fullName: input.fullName,
       phone: input.phone ?? null,
       role: 'STUDENT',
-      status: 'PENDING',
+      status: 'ACTIVE',
       student: {
         create: {
           enrollmentNo: input.enrollmentNo,
@@ -116,6 +151,9 @@ export async function registerStudent(input: RegisterStudentInput): Promise<Publ
     },
     select: publicUserSelect,
   });
+
+  const session = await issueSession(user, ctx);
+  return { user, session };
 }
 
 export async function registerRecruiter(input: RegisterRecruiterInput): Promise<PublicUser> {

@@ -109,8 +109,18 @@ export async function listStudents(filters: ListStudentsFilters) {
 }
 
 export async function updateOwnProfile(studentId: string, input: UpdateOwnProfileInput) {
-  const data: Prisma.StudentUpdateInput = { ...input };
-  if (input.dateOfBirth) data.dateOfBirth = new Date(input.dateOfBirth);
+  const { fullName, phone, ...studentInput } = input;
+  const data: Prisma.StudentUpdateInput = { ...studentInput };
+  if (studentInput.dateOfBirth) data.dateOfBirth = new Date(studentInput.dateOfBirth);
+
+  if (fullName !== undefined || phone !== undefined) {
+    data.user = {
+      update: {
+        ...(fullName !== undefined ? { fullName } : {}),
+        ...(phone !== undefined ? { phone } : {}),
+      },
+    };
+  }
 
   await prisma.student.update({ where: { id: studentId }, data });
   await recomputeProfileCompleteness(studentId);

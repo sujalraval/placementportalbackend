@@ -5,8 +5,9 @@ import { requireAuth } from '../../middleware/authenticate.ts';
 
 const authRouter = Router();
 
-// --- Local email/password ---------------------------------------------------
+// --- Local email/password & OTP -----------------------------------------------
 authRouter.post('/login', controller.login);
+authRouter.post('/login/otp', controller.loginOtp);
 authRouter.post('/register/student', controller.registerStudent);
 authRouter.post('/register/recruiter', controller.registerRecruiter);
 authRouter.post('/refresh', controller.refresh);

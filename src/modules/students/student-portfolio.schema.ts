@@ -73,6 +73,12 @@ export const createCertificationBody = z.object({
   credentialUrl: z.url().optional(),
 });
 
+export const updateCertificationBody = createCertificationBody
+  .partial()
+  .refine((v) => Object.keys(v).length > 0, {
+    message: 'Provide at least one field to update',
+  });
+
 // --- Achievements ------------------------------------------------------------
 
 export const createAchievementBody = z.object({
@@ -80,6 +86,12 @@ export const createAchievementBody = z.object({
   description: z.string().trim().max(1000).optional(),
   achievedOn: z.iso.date().optional(),
 });
+
+export const updateAchievementBody = createAchievementBody
+  .partial()
+  .refine((v) => Object.keys(v).length > 0, {
+    message: 'Provide at least one field to update',
+  });
 
 // --- Positions of responsibility --------------------------------------------
 
@@ -90,6 +102,12 @@ export const createPositionBody = z.object({
   endedOn: z.iso.date().optional(),
   description: z.string().trim().max(1000).optional(),
 });
+
+export const updatePositionBody = createPositionBody
+  .partial()
+  .refine((v) => Object.keys(v).length > 0, {
+    message: 'Provide at least one field to update',
+  });
 
 // --- Semester records --------------------------------------------------------
 // Upsert by semester number rather than create/update/delete separately — a
@@ -111,6 +129,9 @@ export type UpdateProjectInput = z.infer<typeof updateProjectBody>;
 export type CreateExperienceInput = z.infer<typeof createExperienceBody>;
 export type UpdateExperienceInput = z.infer<typeof updateExperienceBody>;
 export type CreateCertificationInput = z.infer<typeof createCertificationBody>;
+export type UpdateCertificationInput = z.infer<typeof updateCertificationBody>;
 export type CreateAchievementInput = z.infer<typeof createAchievementBody>;
+export type UpdateAchievementInput = z.infer<typeof updateAchievementBody>;
 export type CreatePositionInput = z.infer<typeof createPositionBody>;
+export type UpdatePositionInput = z.infer<typeof updatePositionBody>;
 export type UpsertSemesterRecordInput = z.infer<typeof upsertSemesterRecordBody>;
