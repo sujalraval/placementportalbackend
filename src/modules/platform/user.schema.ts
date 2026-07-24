@@ -27,6 +27,7 @@ export const createStaffUserBody = z
   .object({
     fullName: z.string().trim().min(2).max(120),
     email: z.email().toLowerCase().trim(),
+    password: z.string().min(8).max(100),
     role: z.enum(STAFF_ROLES),
     departmentId: z.uuid().optional(),
     phone: z.string().trim().max(20).optional(),

@@ -1,5 +1,6 @@
 import { prisma } from '../../lib/prisma.ts';
 import { ApiError } from '../../lib/http-error.ts';
+import { hashPassword } from '../auth/password.ts';
 import type { Prisma } from '../../generated/prisma/client.ts';
 import type {
   CreateStaffUserInput,
@@ -98,10 +99,13 @@ export async function createStaffUser(input: CreateStaffUserInput) {
 
   if (input.departmentId) await assertDepartmentExists(input.departmentId);
 
+  const passwordHash = await hashPassword(input.password);
+
   return prisma.$transaction(async (tx) => {
     const created = await tx.user.create({
       data: {
         email: input.email,
+        passwordHash,
         fullName: input.fullName,
         phone: input.phone ?? null,
         designation: input.designation ?? null,
