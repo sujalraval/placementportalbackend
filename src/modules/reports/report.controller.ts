@@ -19,3 +19,7 @@ export const getAuditLogs: RequestHandler = async (req, res) => {
   const limit = req.query.limit ? parseInt(req.query.limit as string) : 100;
   res.json({ data: await reportService.getAuditLogs(limit) });
 };
+
+export const getSelectionFunnel: RequestHandler = async (req, res) => {
+  res.json({ data: await reportService.getSelectionFunnel() });
+};

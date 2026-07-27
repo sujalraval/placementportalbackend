@@ -11,3 +11,4 @@ reportRouter.get('/dashboard', controller.getDashboardStats);
 reportRouter.get('/analytics/placements', controller.getPlacementAnalytics);
 reportRouter.get('/analytics/readiness', controller.getStudentReadiness);
 reportRouter.get('/audit-logs', controller.getAuditLogs);
+reportRouter.get('/analytics/funnel', controller.getSelectionFunnel);

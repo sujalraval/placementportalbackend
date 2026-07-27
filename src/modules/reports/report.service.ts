@@ -122,3 +122,67 @@ export async function getAuditLogs(limit: number = 100) {
     }
   });
 }
+
+export async function getSelectionFunnel() {
+  const jobs = await prisma.jobPosting.findMany({
+    include: {
+      company: true,
+      applications: {
+        include: {
+          rounds: {
+            include: {
+              selectionRound: true
+            }
+          },
+          offers: true
+        }
+      }
+    },
+    orderBy: { createdAt: 'desc' }
+  });
+
+  return jobs.map(job => {
+    let applied = 0;
+    let appeared = 0;
+    let tech = 0;
+    let hr = 0;
+    let offer = 0;
+    let joined = 0;
+
+    job.applications.forEach(app => {
+      applied++;
+      
+      // If they progressed past APPLIED, they appeared in some round or got shortlisted
+      if (app.status !== 'APPLIED' && app.status !== 'WITHDRAWN') {
+        appeared++;
+      }
+      
+      const hasTechRound = app.rounds.some(r => r.selectionRound.type === 'TECHNICAL');
+      const hasHrRound = app.rounds.some(r => r.selectionRound.type === 'HR');
+      
+      if (hasTechRound) tech++;
+      if (hasHrRound) hr++;
+      
+      if (app.status === 'OFFER' || app.status === 'JOINED' || app.offers.length > 0) {
+        offer++;
+      }
+      
+      if (app.status === 'JOINED' || app.offers.some(o => o.status === 'ACCEPTED')) {
+        joined++;
+      }
+    });
+
+    return {
+      label: `${job.company.name} · ${job.title}`,
+      data: {
+        applied,
+        appeared,
+        tech,
+        hr,
+        offer,
+        joined
+      }
+    };
+  });
+}
+
