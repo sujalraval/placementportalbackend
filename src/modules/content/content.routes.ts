@@ -1,8 +1,29 @@
 import { Router } from 'express';
+import multer from 'multer';
+import path from 'path';
 import * as controller from './content.controller.ts';
 import { requireAuth, requireRole } from '../../middleware/authenticate.ts';
 
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      const uploadPath = path.join(process.cwd(), 'public/uploads');
+      // Node 20+ fs.mkdirSync(uploadPath, { recursive: true }) is fine, but multer handles it if it exists
+      import('fs').then(fs => fs.mkdirSync(uploadPath, { recursive: true })).catch(() => {});
+      cb(null, uploadPath);
+    },
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname);
+      cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`);
+    }
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+});
+
 export const contentRouter = Router();
+
+// --- Uploads ---
+contentRouter.post('/upload', requireAuth, requireRole('ADMIN', 'COORDINATOR'), upload.single('file'), controller.uploadFile);
 
 // --- News ---
 contentRouter.get('/news', requireAuth, controller.listNews);

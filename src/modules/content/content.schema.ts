@@ -17,6 +17,7 @@ export const createNewsBody = z.object({
   body: z.string().min(10),
   category: z.string().max(50).optional().nullable(),
   imageUrl: z.string().url().optional().nullable(),
+  attachmentUrl: z.string().url().optional().nullable(),
 });
 
 export const updateContentStatusBody = z.object({
@@ -34,6 +35,8 @@ export const createEventBody = z.object({
   endsAt: z.string().datetime().optional().nullable(),
   venue: z.string().max(255).optional().nullable(),
   imageUrl: z.string().url().optional().nullable(),
+  attachmentUrl: z.string().url().optional().nullable(),
+  departmentIds: z.array(z.string().uuid()).optional(),
 });
 
 // --- Broadcasts ---

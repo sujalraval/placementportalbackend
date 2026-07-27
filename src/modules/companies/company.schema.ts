@@ -13,14 +13,14 @@ export const createCompanyBody = z.object({
   name: z.string().trim().min(2).max(120),
   slug: z.string().trim().min(2).max(120).regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric and hyphens'),
   type: z.enum(['DIRECT_EMPLOYER', 'RECRUITMENT_AGENCY', 'INDIVIDUAL_AGENT']).optional(),
-  sectorId: z.string().uuid('Not a valid sector id').nullable().optional(),
+  sectorIds: z.array(z.string().uuid('Not a valid sector id')).optional(),
   about: z.string().trim().max(2000).nullable().optional(),
   website: z.string().url().nullable().optional(),
   logoUrl: z.string().url().nullable().optional(),
   employeeCount: z.string().nullable().optional(),
   hqCity: z.string().nullable().optional(),
   hqCountry: z.string().nullable().optional(),
-  visibilityScope: z.enum(['UNIVERSITY_WIDE', 'DEPARTMENT_ONLY']).optional(),
+  visibilityScopes: z.array(z.enum(['UNIVERSITY_WIDE', 'DEPARTMENT_ONLY', 'COLLEGE'])).optional(),
   departmentId: z.string().uuid('Not a valid department id').nullable().optional(),
 });
 

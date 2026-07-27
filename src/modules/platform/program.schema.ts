@@ -22,6 +22,12 @@ export const createProgramBody = z.object({
   degreeLevel: z.string().trim().min(2).max(40),
   durationYears: z.number().int().min(1).max(10),
   totalSemesters: z.number().int().min(1).max(20),
+  skills: z.array(z.string()).optional(),
+  sectors: z.array(z.string()).optional(),
+  subSectors: z.array(z.string()).optional(),
+  industry: z.array(z.string()).optional(),
+  domain: z.array(z.string()).optional(),
+  subDomain: z.array(z.string()).optional(),
 });
 
 export const updateProgramBody = createProgramBody

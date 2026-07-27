@@ -7,6 +7,7 @@ import type {
   UpdateOwnProfileInput,
   UpdatePlacementStatusInput,
   UpsertPreferenceInput,
+  ImportStudentsInput,
 } from './student.schema.ts';
 
 const rosterSelect = {
@@ -172,6 +173,99 @@ export async function upsertPreference(studentId: string, input: UpsertPreferenc
   });
   await recomputeProfileCompleteness(studentId);
   return preference;
+}
+
+export async function importStudents(data: ImportStudentsInput) {
+  const departments = await prisma.department.findMany();
+  const deptMap = new Map(departments.map((d) => [d.code.toLowerCase(), d.id]));
+
+  const programs = await prisma.program.findMany();
+  const progMap = new Map(programs.map((p) => [p.code.toLowerCase(), p.id]));
+
+  let importedCount = 0;
+  let skippedCount = 0;
+  const errors: string[] = [];
+
+  for (const row of data) {
+    const deptId = deptMap.get(row.departmentCode.toLowerCase());
+    if (!deptId) {
+      errors.push(`Row for ${row.enrollmentNo}: Unknown department code "${row.departmentCode}"`);
+      skippedCount++;
+      continue;
+    }
+
+    let programId: string | undefined = undefined;
+    if (row.programCode) {
+      programId = progMap.get(row.programCode.toLowerCase());
+      if (!programId) {
+        errors.push(`Row for ${row.enrollmentNo}: Unknown program code "${row.programCode}"`);
+        skippedCount++;
+        continue;
+      }
+    }
+
+    try {
+      await prisma.$transaction(async (tx) => {
+        // Check if user with this email or enrollmentNo already exists
+        const existingUser = await tx.user.findFirst({
+          where: {
+            OR: [
+              { email: row.email },
+              { student: { enrollmentNo: row.enrollmentNo } }
+            ]
+          },
+          include: { student: true }
+        });
+
+        if (existingUser) {
+          // If the student profile already exists, skip it for now.
+          // In a real ERP sync, we might update fields like CGPA instead.
+          if (existingUser.student) {
+            skippedCount++;
+            return;
+          }
+          // If user exists but is not a student (rare case), fail this row
+          throw new Error(`User with email ${row.email} exists but is not a student.`);
+        }
+
+        // Create the user
+        const user = await tx.user.create({
+          data: {
+            email: row.email,
+            fullName: row.fullName,
+            phone: row.phone || null,
+            role: 'STUDENT',
+            status: 'ACTIVE',
+          },
+        });
+
+        // Create the student profile
+        await tx.student.create({
+          data: {
+            userId: user.id,
+            enrollmentNo: row.enrollmentNo,
+            departmentId: deptId,
+            programId: programId,
+            batchStartYear: row.batchStartYear,
+            batchEndYear: row.batchEndYear,
+            cgpa: row.cgpa,
+            activeBacklogs: row.activeBacklogs,
+            gender: row.gender || null,
+            category: row.category || null,
+            dateOfBirth: row.dateOfBirth ? new Date(row.dateOfBirth) : null,
+            placementStatus: 'UNPLACED',
+          },
+        });
+
+        importedCount++;
+      });
+    } catch (err: any) {
+      errors.push(`Failed to import ${row.enrollmentNo}: ${err.message}`);
+      skippedCount++;
+    }
+  }
+
+  return { importedCount, skippedCount, errors };
 }
 
 // ---------------------------------------------------------------------------

@@ -28,6 +28,8 @@ export function createApp() {
   app.use(cookieParser());
   app.use(morgan(isProduction ? 'combined' : 'dev'));
 
+  app.use('/uploads', express.static(path.join(process.cwd(), 'public/uploads')));
+
   app.use('/api/v1', router);
 
   // Serve Frontend Static Files in Production

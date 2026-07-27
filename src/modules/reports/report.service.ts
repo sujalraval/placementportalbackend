@@ -163,11 +163,11 @@ export async function getSelectionFunnel() {
       if (hasTechRound) tech++;
       if (hasHrRound) hr++;
       
-      if (app.status === 'OFFER' || app.status === 'JOINED' || app.offers.length > 0) {
+      if (app.status === 'OFFER' || app.status === 'JOINED' || (app as any).offers?.length > 0) {
         offer++;
       }
       
-      if (app.status === 'JOINED' || app.offers.some(o => o.status === 'ACCEPTED')) {
+      if (app.status === 'JOINED' || (app as any).offers?.some((o: any) => o.status === 'ACCEPTED')) {
         joined++;
       }
     });

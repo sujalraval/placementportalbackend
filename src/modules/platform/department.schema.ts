@@ -16,6 +16,11 @@ export const createDepartmentBody = z.object({
     .max(16)
     .regex(/^[A-Z0-9_-]+$/, 'Code must be upper-case letters, digits, _ or -'),
   about: z.string().trim().max(2000).optional(),
+  contactEmail: z.string().trim().email().optional().or(z.literal('')),
+  contactPhone: z.string().trim().optional(),
+  coordinatorName: z.string().trim().optional(),
+  coordinatorEmail: z.string().trim().email().optional().or(z.literal('')),
+  coordinatorPhone: z.string().trim().optional(),
 });
 
 /// Every field optional, but reject `{}` — an empty PATCH is almost always a

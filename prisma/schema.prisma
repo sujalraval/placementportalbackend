@@ -67,6 +67,7 @@ enum VerificationStatus {
 enum VisibilityScope {
   UNIVERSITY_WIDE
   DEPARTMENT_ONLY
+  COLLEGE
 }
 
 enum CompanyType {
@@ -257,12 +258,12 @@ enum OutboxStatus {
 ///   RECRUITER             -> companyId scopes what they see
 ///   ADMIN                 -> both null, sees everything
 model User {
-  id    String @id @default(uuid()) @db.Uuid
-  email String @unique @db.Citext
+  id           String     @id @default(uuid()) @db.Uuid
+  email        String     @unique @db.Citext
   /// Null for accounts that only ever sign in through LinkedIn/Outlook.
   /// `authIdentities` being empty is what makes an account password-only.
-  passwordHash String? @map("password_hash")
-  fullName     String  @map("full_name")
+  passwordHash String?    @map("password_hash")
+  fullName     String     @map("full_name")
   phone        String?
   avatarUrl    String?    @map("avatar_url")
   role         UserRole
@@ -375,12 +376,12 @@ model RefreshSession {
   userAgent String? @map("user_agent")
   ipAddress String? @map("ip_address")
 
-  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
-  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+  expiresAt      DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(6)
   /// Set when this token is rotated. A refresh presented after rotation means
   /// the token leaked, and the whole family gets revoked.
-  replacedByHash String? @map("replaced_by_hash")
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  replacedByHash String?   @map("replaced_by_hash")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -394,6 +395,11 @@ model Department {
   name      String   @unique
   code      String   @unique
   about     String?
+  contactEmail String? @map("contact_email")
+  contactPhone String? @map("contact_phone")
+  coordinatorName String? @map("coordinator_name")
+  coordinatorEmail String? @map("coordinator_email")
+  coordinatorPhone String? @map("coordinator_phone")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -410,6 +416,7 @@ model Department {
   internshipPostings  InternshipPosting[]
   drives              Drive[]
   eligibleForDrives   DriveDepartment[]
+  events              EventItem[]
 
   @@map("department")
 }
@@ -422,6 +429,12 @@ model Program {
   degreeLevel    String   @map("degree_level")
   durationYears  Int      @map("duration_years")
   totalSemesters Int      @map("total_semesters")
+  skills         String[] @default([])
+  sectors        String[] @default([])
+  subSectors     String[] @default([]) @map("sub_sectors")
+  industry       String[] @default([])
+  domain         String[] @default([])
+  subDomain      String[] @default([]) @map("sub_domain")
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -522,9 +535,10 @@ model StudentLink {
 /// Canonical skill registry. Shared by students and postings so the 45%
 /// skills-overlap term of the match score is a join, not a string compare.
 model Skill {
-  id       String  @id @default(uuid()) @db.Uuid
-  name     String  @unique @db.Citext
-  category String?
+  id          String  @id @default(uuid()) @db.Uuid
+  name        String  @unique @db.Citext
+  description String  @default("")
+  category    String?
 
   students    StudentSkill[]
   jobPostings JobPostingSkill[]
@@ -695,10 +709,14 @@ model StudentPreference {
 // ---------------------------------------------------------------------------
 
 model Sector {
-  id        String   @id @default(uuid()) @db.Uuid
-  name      String   @unique
-  code      String?  @unique
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  id                 String   @id @default(uuid()) @db.Uuid
+  name               String   @unique
+  code               String?  @unique
+  industryRelevance  String[] @default([]) @map("industry_relevance")
+  industryDomains    String[] @default([]) @map("industry_domains")
+  industrySubDomains String[] @default([]) @map("industry_sub_domains")
+  applicationAreas   String[] @default([]) @map("application_areas")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   companies Company[]
 
@@ -714,7 +732,6 @@ model Company {
   name          String
   slug          String      @unique
   type          CompanyType @default(DIRECT_EMPLOYER)
-  sectorId      String?     @map("sector_id") @db.Uuid
   about         String?
   website       String?
   logoUrl       String?     @map("logo_url")
@@ -722,7 +739,7 @@ model Company {
   hqCity        String?     @map("hq_city")
   hqCountry     String?     @map("hq_country")
 
-  visibilityScope     VisibilityScope    @default(UNIVERSITY_WIDE) @map("visibility_scope")
+  visibilityScopes    VisibilityScope[]  @default([UNIVERSITY_WIDE]) @map("visibility_scopes")
   departmentId        String?            @map("department_id") @db.Uuid
   verificationStatus  VerificationStatus @default(PENDING) @map("verification_status")
   onboardingStage     OnboardingStage    @default(REGISTERED) @map("onboarding_stage")
@@ -735,7 +752,7 @@ model Company {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  sector      Sector?     @relation(fields: [sectorId], references: [id], onDelete: SetNull)
+  sectors     Sector[]
   department  Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
   onboardedBy User?       @relation("CompanyOnboardedBy", fields: [onboardedByUserId], references: [id], onDelete: SetNull)
 
@@ -750,8 +767,7 @@ model Company {
   messageThreads     MessageThread[]
   employmentOutcomes EmploymentOutcome[]
 
-  @@index([visibilityScope, departmentId])
-  @@index([sectorId])
+  @@index([departmentId])
   @@map("company")
 }
 
@@ -1488,18 +1504,19 @@ model EmploymentOutcome {
 // ---------------------------------------------------------------------------
 
 model NewsItem {
-  id           String        @id @default(uuid()) @db.Uuid
-  title        String
-  slug         String        @unique
-  excerpt      String?
-  body         String
-  category     String?
-  imageUrl     String?       @map("image_url")
-  status       ContentStatus @default(DRAFT)
-  publishedAt  DateTime?     @map("published_at") @db.Timestamptz(6)
-  authorUserId String?       @map("author_user_id") @db.Uuid
-  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id            String        @id @default(uuid()) @db.Uuid
+  title         String
+  slug          String        @unique
+  excerpt       String?
+  body          String
+  category      String?
+  imageUrl      String?       @map("image_url")
+  attachmentUrl String?       @map("attachment_url")
+  status        ContentStatus @default(DRAFT)
+  publishedAt   DateTime?     @map("published_at") @db.Timestamptz(6)
+  authorUserId  String?       @map("author_user_id") @db.Uuid
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   author User? @relation(fields: [authorUserId], references: [id], onDelete: SetNull)
 
@@ -1519,6 +1536,7 @@ model EventItem {
   endsAt          DateTime?     @map("ends_at") @db.Timestamptz(6)
   venue           String?
   imageUrl        String?       @map("image_url")
+  attachmentUrl   String?       @map("attachment_url")
   status          ContentStatus @default(DRAFT)
   createdByUserId String?       @map("created_by_user_id") @db.Uuid
   createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -1526,6 +1544,7 @@ model EventItem {
 
   createdBy User? @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
 
+  departments   Department[]
   galleryItems  GalleryItem[]
   registrations EventRegistration[]
 
@@ -1874,3 +1893,46 @@ model AuditLog {
   @@index([actorUserId, createdAt])
   @@map("audit_log")
 }
+
+model College {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  @@map("college")
+}
+
+model Industry {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  @@map("industry")
+}
+
+model ApplicationArea {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  @@map("application_area")
+}
+
+model IndustryDomain {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  @@map("industry_domain")
+}
+
+model IndustrySubDomain {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  @@map("industry_sub_domain")
+}
+
+model PartnerType {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  @@map("partner_type")
+}
+

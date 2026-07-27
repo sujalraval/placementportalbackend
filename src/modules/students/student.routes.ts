@@ -69,5 +69,6 @@ studentRouter.delete('/me/documents/:id', self, documents.remove);
 const staff = requireRole('COORDINATOR', 'ADMIN');
 
 studentRouter.get('/', staff, student.list);
+studentRouter.post('/import', staff, student.importStudents);
 studentRouter.get('/:id', staff, student.getById);
 studentRouter.patch('/:id/academic-record', staff, student.updateAcademicRecord);

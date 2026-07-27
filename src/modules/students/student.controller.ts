@@ -9,6 +9,7 @@ import {
   updateOwnProfileBody,
   updatePlacementStatusBody,
   upsertPreferenceBody,
+  importStudentsBody,
 } from './student.schema.ts';
 
 // --- Self-service ------------------------------------------------------------
@@ -63,4 +64,13 @@ export const updateAcademicRecord: RequestHandler = async (req, res) => {
   await service.getStudentById(id, req.user); // enforces department scope, 404s if missing
   const body = academicRecordBody.parse(req.body);
   res.json({ data: await service.updateAcademicRecord(id, body) });
+};
+
+export const importStudents: RequestHandler = async (req, res) => {
+  if (!req.user || (req.user.role !== 'ADMIN' && req.user.role !== 'COORDINATOR')) {
+    throw ApiError.unauthorized();
+  }
+  const body = importStudentsBody.parse(req.body);
+  const result = await service.importStudents(body);
+  res.json({ data: result });
 };

@@ -10,6 +10,22 @@ import {
   createBroadcastBody,
   updateContentStatusBody,
 } from './content.schema.ts';
+import { env } from '../../config/env.ts';
+
+// --- Uploads ---
+
+export const uploadFile: RequestHandler = (req, res) => {
+  if (!req.file) {
+    res.status(400).json({ error: { message: 'No file uploaded' } });
+    return;
+  }
+  // Construct the URL where the file can be accessed.
+  // In production, env.API_URL or similar could be used.
+  // We'll use a relative URL if both frontend and backend are on the same domain,
+  // or a full URL if we have an API_BASE set. Assuming the frontend knows where the API is.
+  const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+  res.status(201).json({ data: { url: fileUrl } });
+};
 
 // --- News ---
 

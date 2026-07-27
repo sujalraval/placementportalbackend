@@ -4,6 +4,8 @@ import { authRouter } from '../modules/auth/auth.routes.ts';
 import { departmentRouter } from '../modules/platform/department.routes.ts';
 import { programRouter } from '../modules/platform/program.routes.ts';
 import { sectorRouter } from '../modules/platform/sector.routes.ts';
+import { skillRoutes } from '../modules/platform/skill.routes.ts';
+import { genericMasterRoutes } from '../modules/platform/masters/generic.routes.ts';
 import { userRouter } from '../modules/platform/user.routes.ts';
 import { studentRouter } from '../modules/students/student.routes.ts';
 import { companyRouter } from '../modules/companies/company.routes.ts';
@@ -51,6 +53,8 @@ router.use('/auth', authRouter);
 router.use('/departments', departmentRouter);
 router.use('/programs', programRouter);
 router.use('/sectors', sectorRouter);
+router.use('/skills', skillRoutes);
+router.use('/masters', genericMasterRoutes);
 router.use('/users', userRouter);
 router.use('/students', studentRouter);
 

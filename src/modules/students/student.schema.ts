@@ -81,3 +81,24 @@ export type UpdateOwnProfileInput = z.infer<typeof updateOwnProfileBody>;
 export type UpdatePlacementStatusInput = z.infer<typeof updatePlacementStatusBody>;
 export type AcademicRecordInput = z.infer<typeof academicRecordBody>;
 export type UpsertPreferenceInput = z.infer<typeof upsertPreferenceBody>;
+
+export const importStudentsBody = z.array(
+  z.object({
+    enrollmentNo: z.string().trim().min(1),
+    fullName: z.string().trim().min(1),
+    email: z.string().trim().email(),
+    departmentCode: z.string().trim().min(1),
+    programCode: z.string().trim().optional(),
+    batchStartYear: z.coerce.number().int().min(2000).max(2100),
+    batchEndYear: z.coerce.number().int().min(2000).max(2100),
+    cgpa: z.coerce.number().min(0).max(10).optional().default(0),
+    activeBacklogs: z.coerce.number().int().min(0).optional().default(0),
+    gender: z.string().trim().optional(),
+    category: z.string().trim().optional(),
+    dateOfBirth: z.string().trim().optional(),
+    phone: z.string().trim().optional(),
+  })
+).min(1).max(1000);
+
+export type ImportStudentInput = z.infer<typeof importStudentsBody>[number];
+export type ImportStudentsInput = z.infer<typeof importStudentsBody>;

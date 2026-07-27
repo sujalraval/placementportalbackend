@@ -100,7 +100,7 @@ export async function removeSkill(studentId: string, skillId: string) {
 export const listProjects = (studentId: string) =>
   prisma.studentProject.findMany({ where: { studentId }, orderBy: { createdAt: 'desc' } });
 
-export async function createProject(studentId: string, input: CreateProjectInput) {
+export async function createProject(studentId: string, input: any) {
   const project = await prisma.studentProject.create({
     data: {
       studentId,

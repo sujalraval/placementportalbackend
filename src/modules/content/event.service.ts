@@ -14,6 +14,7 @@ export async function listEvents(user: Express.Request['user']) {
   return prisma.eventItem.findMany({
     where,
     orderBy: { startsAt: 'asc' },
+    include: { departments: { select: { id: true, name: true } } },
   });
 }
 
@@ -21,7 +22,8 @@ export async function getEventBySlug(slug: string, user: Express.Request['user']
   if (!user) throw ApiError.unauthorized();
 
   const event = await prisma.eventItem.findUnique({
-    where: { slug }
+    where: { slug },
+    include: { departments: { select: { id: true, name: true } } },
   });
 
   if (!event) throw ApiError.notFound('Event not found');
@@ -47,13 +49,18 @@ export async function createEvent(input: CreateEventInput, user: Express.Request
   const existing = await prisma.eventItem.findUnique({ where: { slug: input.slug } });
   if (existing) throw ApiError.conflict('An event with this slug already exists');
 
+  const { departmentIds, ...rest } = input;
+
   return prisma.eventItem.create({
     data: {
-      ...input,
+      ...rest,
       startsAt: new Date(input.startsAt),
       endsAt: input.endsAt ? new Date(input.endsAt) : null,
       createdByUserId: user.sub,
       status: 'DRAFT',
+      departments: departmentIds && departmentIds.length > 0 ? {
+        connect: departmentIds.map(id => ({ id }))
+      } : undefined,
     }
   });
 }

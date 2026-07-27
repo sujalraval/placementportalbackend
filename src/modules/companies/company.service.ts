@@ -22,7 +22,7 @@ function buildVisibilityFilter(user: Express.Request['user']): any {
     if (!user.departmentId) throw ApiError.forbidden('No department scope');
     return {
       OR: [
-        { visibilityScope: 'UNIVERSITY_WIDE' },
+        { visibilityScopes: { has: 'UNIVERSITY_WIDE' } },
         { departmentId: user.departmentId },
       ],
     };
@@ -37,11 +37,11 @@ function buildVisibilityFilter(user: Express.Request['user']): any {
 
   if (user.departmentId) {
     scope.OR = [
-      { visibilityScope: 'UNIVERSITY_WIDE' },
+      { visibilityScopes: { has: 'UNIVERSITY_WIDE' } },
       { departmentId: user.departmentId },
     ];
   } else {
-    scope.visibilityScope = 'UNIVERSITY_WIDE';
+    scope.visibilityScopes = { has: 'UNIVERSITY_WIDE' };
   }
 
   return scope;
@@ -68,7 +68,7 @@ export async function listCompanies(user: Express.Request['user']) {
     where,
     orderBy: { name: 'asc' },
     include: {
-      sector: { select: { id: true, name: true } },
+      sectors: { select: { id: true, name: true } },
       department: { select: { id: true, name: true } },
     }
   });
@@ -83,7 +83,7 @@ export async function getCompanyById(id: string, user: Express.Request['user']) 
   const company = await prisma.company.findFirst({
     where,
     include: {
-      sector: { select: { id: true, name: true } },
+      sectors: { select: { id: true, name: true } },
       department: { select: { id: true, name: true } },
     }
   });
@@ -103,9 +103,13 @@ export async function createCompany(input: CreateCompanyInput, user: Express.Req
   });
   if (clash) throw ApiError.conflict('A company with that slug already exists');
 
+  const { sectorIds, visibilityScopes, ...restInput } = input;
+
   return prisma.company.create({
     data: {
-      ...input,
+      ...restInput,
+      visibilityScopes: visibilityScopes?.length ? visibilityScopes : ['UNIVERSITY_WIDE'],
+      sectors: sectorIds?.length ? { connect: sectorIds.map(id => ({ id })) } : undefined,
       onboardedByUserId: user.sub,
       // For Admins/Coordinators, we auto-approve them.
       verificationStatus: 'APPROVED',
@@ -126,9 +130,15 @@ export async function updateCompany(id: string, input: UpdateCompanyInput, user:
     }
   }
 
+  const { sectorIds, visibilityScopes, ...restInput } = input;
+
+  const dataPayload: any = { ...restInput };
+  if (visibilityScopes !== undefined) dataPayload.visibilityScopes = visibilityScopes;
+  if (sectorIds !== undefined) dataPayload.sectors = { set: sectorIds.map(sid => ({ id: sid })) };
+
   return prisma.company.update({
     where: { id },
-    data: input,
+    data: dataPayload,
   });
 }
 
