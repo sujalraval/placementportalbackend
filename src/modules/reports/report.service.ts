@@ -39,14 +39,14 @@ export async function getPlacementAnalytics(batchYear?: number) {
           student: {
             select: {
               batchEndYear: true,
-              departmentName: true
+              department: { select: { name: true } }
             }
           },
           jobPosting: {
             include: {
               company: {
                 include: {
-                  sector: true
+                  sectors: true
                 }
               }
             }
@@ -64,8 +64,8 @@ export async function getPlacementAnalytics(batchYear?: number) {
   const bySector: Record<string, number> = {};
 
   filteredOffers.forEach(o => {
-    const dept = o.application.student.departmentName || 'Unknown';
-    const sector = o.application.jobPosting.company.sector?.name || 'Unknown';
+    const dept = o.application.student.department?.name || 'Unknown';
+    const sector = o.application.jobPosting.company.sectors?.[0]?.name || 'Unknown';
 
     byDepartment[dept] = (byDepartment[dept] || 0) + 1;
     bySector[sector] = (bySector[sector] || 0) + 1;

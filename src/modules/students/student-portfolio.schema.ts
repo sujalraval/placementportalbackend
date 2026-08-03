@@ -48,7 +48,7 @@ export const updateProjectBody = createProjectBody
 export const createExperienceBody = z.object({
   organisation: z.string().trim().min(1).max(160),
   role: z.string().trim().min(1).max(120),
-  employmentType: z.string().trim().max(40).optional(),
+  employmentType: z.string().trim().max(255).optional(),
   location: z.string().trim().max(120).optional(),
   startedOn: z.iso.date(),
   endedOn: z.iso.date().optional(),
