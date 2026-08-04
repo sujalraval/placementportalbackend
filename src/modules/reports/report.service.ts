@@ -134,7 +134,7 @@ export async function getSelectionFunnel() {
               selectionRound: true
             }
           },
-          offers: true
+          offer: true
         }
       }
     },
@@ -146,7 +146,7 @@ export async function getSelectionFunnel() {
     let appeared = 0;
     let tech = 0;
     let hr = 0;
-    let offer = 0;
+    let offerCount = 0;
     let joined = 0;
 
     job.applications.forEach(app => {
@@ -163,11 +163,11 @@ export async function getSelectionFunnel() {
       if (hasTechRound) tech++;
       if (hasHrRound) hr++;
       
-      if (app.status === 'OFFER' || app.status === 'JOINED' || (app as any).offers?.length > 0) {
-        offer++;
+      if (app.status === 'OFFER' || app.status === 'JOINED' || app.offer) {
+        offerCount++;
       }
       
-      if (app.status === 'JOINED' || (app as any).offers?.some((o: any) => o.status === 'ACCEPTED')) {
+      if (app.status === 'JOINED' || app.offer?.status === 'ACCEPTED') {
         joined++;
       }
     });
@@ -179,7 +179,7 @@ export async function getSelectionFunnel() {
         appeared,
         tech,
         hr,
-        offer,
+        offer: offerCount,
         joined
       }
     };
