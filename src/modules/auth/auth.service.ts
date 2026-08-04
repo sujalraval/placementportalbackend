@@ -184,7 +184,7 @@ export async function registerRecruiter(input: RegisterRecruiterInput): Promise<
           slug,
           type: input.companyType,
           website: input.website ?? null,
-          sectorId: input.sectorId ?? null,
+          ...(input.sectorId ? { sectors: { connect: { id: input.sectorId } } } : {}),
           hqCity: input.hqCity ?? null,
           about: input.about ?? null,
           // Onboarding is a five-step checklist ending in MOU + activation;
@@ -192,7 +192,7 @@ export async function registerRecruiter(input: RegisterRecruiterInput): Promise<
           onboardingStage: 'REGISTERED',
           verificationStatus: 'PENDING',
           isActive: false,
-          visibilityScope: 'UNIVERSITY_WIDE',
+          visibilityScopes: ['UNIVERSITY_WIDE'],
         },
       },
     },

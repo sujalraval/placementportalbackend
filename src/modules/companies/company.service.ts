@@ -149,7 +149,7 @@ export async function verifyCompany(id: string, input: VerifyCompanyInput, user:
   const company = await prisma.company.findUnique({ where: { id } });
   if (!company) throw ApiError.notFound('Company not found');
 
-  return prisma.company.update({
+  const updatedCompany = await prisma.company.update({
     where: { id },
     data: {
       verificationStatus: input.verificationStatus,
@@ -157,6 +157,15 @@ export async function verifyCompany(id: string, input: VerifyCompanyInput, user:
       onboardingStage: input.verificationStatus === 'APPROVED' ? 'VERIFIED' : company.onboardingStage,
     }
   });
+
+  if (input.verificationStatus === 'APPROVED') {
+    await prisma.user.updateMany({
+      where: { companyId: id, role: 'RECRUITER', status: 'PENDING' },
+      data: { status: 'ACTIVE' },
+    });
+  }
+
+  return updatedCompany;
 }
 
 // --- Contacts ---
